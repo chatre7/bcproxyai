@@ -1,65 +1,567 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useCallback, useEffect, useState } from "react";
+import {
+  CircleProgress,
+  GlowDot,
+  ProviderBadge,
+  Skeleton,
+  PROVIDER_COLORS,
+  TIER_COLORS,
+  TIER_LABELS,
+  fmtTime,
+  fmtMs,
+  fmtCountdown,
+} from "../components/shared";
+import type {
+  StatusData,
+  ModelData,
+  LeaderboardEntry,
+} from "../components/shared";
+import { StatsCards } from "../components/StatsCards";
+import { ModelGrid } from "../components/ModelGrid";
+import { ChatPanel } from "../components/ChatPanel";
+
+// ─── Gateway Config Card ───────────────────────────────────────────────────────
+
+const GATEWAY_CONFIG = `{
+  "apiProvider": "openai-compatible",
+  "openAiBaseUrl": "http://localhost:3333/v1",
+  "openAiModelId": "auto"
+}`;
+
+function GatewayConfigCard() {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(GATEWAY_CONFIG).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <div
+      style={{
+        background: "rgba(99,102,241,0.06)",
+        border: "1px solid rgba(99,102,241,0.25)",
+        backdropFilter: "blur(12px)",
+        borderRadius: "1rem",
+        padding: "1.5rem",
+        marginTop: "1.5rem",
+        maxWidth: "48rem",
+        marginLeft: "auto",
+        marginRight: "auto",
+      }}
+    >
+      <div style={{ marginBottom: "0.75rem" }}>
+        <span style={{ fontSize: "0.75rem", color: "rgb(165,180,252)", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+          Gateway Config
+        </span>
+        <p style={{ fontSize: "0.875rem", color: "rgb(156,163,175)", marginTop: "0.25rem" }}>
+          วิธีเชื่อมต่อ BCProxyAI กับ OpenClaw:
+        </p>
+      </div>
+
+      <div style={{ position: "relative" }}>
+        <pre
+          style={{
+            background: "rgba(0,0,0,0.4)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: "0.5rem",
+            padding: "1rem",
+            fontFamily: "var(--font-geist-mono), monospace",
+            fontSize: "0.8rem",
+            color: "rgb(209,213,219)",
+            overflowX: "auto",
+            margin: 0,
+          }}
+        >
+          {GATEWAY_CONFIG}
+        </pre>
+        <button
+          onClick={handleCopy}
+          style={{
+            position: "absolute",
+            top: "0.5rem",
+            right: "0.5rem",
+            padding: "0.25rem 0.75rem",
+            background: copied ? "rgba(16,185,129,0.3)" : "rgba(99,102,241,0.3)",
+            border: `1px solid ${copied ? "rgba(16,185,129,0.5)" : "rgba(99,102,241,0.5)"}`,
+            borderRadius: "0.375rem",
+            color: copied ? "rgb(110,231,183)" : "rgb(165,180,252)",
+            fontSize: "0.75rem",
+            fontWeight: 600,
+            cursor: "pointer",
+            transition: "all 0.2s",
+          }}
+        >
+          {copied ? "คัดลอกแล้ว ✓" : "คัดลอก"}
+        </button>
+      </div>
+
+      <div style={{ marginTop: "1rem" }}>
+        <p style={{ fontSize: "0.75rem", color: "rgb(107,114,128)", marginBottom: "0.5rem", fontWeight: 600 }}>
+          โมเดลพิเศษ:
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+          {[
+            { id: "auto",           desc: "เลือกตัวดีสุดอัตโนมัติ" },
+            { id: "bcproxy/fast",   desc: "เร็วที่สุด" },
+            { id: "bcproxy/tools",  desc: "รองรับ tool calling" },
+            { id: "bcproxy/thai",   desc: "เก่งภาษาไทย" },
+          ].map((m) => (
+            <div key={m.id} style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+              <code style={{ fontSize: "0.75rem", color: "rgb(129,140,248)", fontFamily: "var(--font-geist-mono), monospace", minWidth: "10rem" }}>
+                {m.id}
+              </code>
+              <span style={{ fontSize: "0.75rem", color: "rgb(156,163,175)" }}>— {m.desc}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Dashboard ────────────────────────────────────────────────────────────
+
+export default function Dashboard() {
+  const [statusData, setStatusData] = useState<StatusData | null>(null);
+  const [models, setModels] = useState<ModelData[]>([]);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [triggering, setTriggering] = useState(false);
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [, setTick] = useState(0);
+
+  // Scroll to top on mount
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []);
+
+  // Tick every second for cooldown countdowns
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const fetchAll = useCallback(async () => {
+    try {
+      const [s, m, l] = await Promise.all([
+        fetch("/api/status").then((r) => r.json()),
+        fetch("/api/models").then((r) => r.json()),
+        fetch("/api/leaderboard").then((r) => r.json()),
+      ]);
+      setStatusData(s);
+      setModels(Array.isArray(m) ? m : []);
+      setLeaderboard(Array.isArray(l) ? l : []);
+      setLastRefresh(new Date());
+    } catch (err) {
+      console.error("fetch error", err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchAll();
+    const t = setInterval(fetchAll, 15_000);
+    return () => clearInterval(t);
+  }, [fetchAll]);
+
+  const triggerWorker = async () => {
+    setTriggering(true);
+    try {
+      await fetch("/api/worker", { method: "POST" });
+      await fetchAll();
+    } finally {
+      setTriggering(false);
+    }
+  };
+
+  const workerStatus = statusData?.worker?.status ?? "idle";
+  const stats = statusData?.stats;
+  const logs = statusData?.recentLogs ?? [];
+
+  // Sorted models
+  const availableModels = models.filter((m) => m.health.status === "available");
+  const cooldownModels = models.filter((m) => m.health.status === "cooldown");
+  const unknownModels = models.filter((m) => m.health.status === "unknown");
+  const sortedModels = [...availableModels, ...cooldownModels, ...unknownModels];
+
+  const logLevelStyle: Record<string, string> = {
+    info:    "text-gray-400",
+    warn:    "text-amber-400",
+    error:   "text-red-400",
+    success: "text-emerald-400",
+  };
+
+  const stepBadge: Record<string, string> = {
+    scan:      "bg-blue-500/20 text-blue-300 border-blue-500/30",
+    health:    "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
+    benchmark: "bg-indigo-500/20 text-indigo-300 border-indigo-500/30",
+    worker:    "bg-gray-500/20 text-gray-300 border-gray-500/30",
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-950">
+      {/* Ambient background */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden" aria-hidden>
+        <div className="absolute top-0 left-1/4 w-[600px] h-[400px] bg-indigo-600/5 rounded-full blur-[100px]" />
+        <div className="absolute top-1/3 right-1/4 w-[400px] h-[300px] bg-cyan-500/5 rounded-full blur-[80px]" />
+        <div className="absolute bottom-1/4 left-1/3 w-[500px] h-[300px] bg-purple-600/4 rounded-full blur-[120px]" />
+      </div>
+
+      {/* ── Sticky Nav ─────────────────────────────────────────────────────── */}
+      <nav className="sticky top-0 z-50 border-b border-white/5 glass">
+        <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4 sm:px-6">
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-indigo-500 to-cyan-500 flex items-center justify-center shadow-lg animate-glow-pulse">
+                <span className="text-xs font-black text-white">BC</span>
+              </div>
+            </div>
+            <span className="font-bold text-white tracking-tight">BCProxyAI</span>
+            <span className="hidden sm:inline text-xs text-gray-500 border border-gray-800 rounded px-2 py-0.5">
+              AI Gateway
+            </span>
+          </div>
+          <div className="flex items-center gap-1 text-xs">
+            {[
+              { id: "status",     label: "ภาพรวม" },
+              { id: "rankings",   label: "อันดับ" },
+              { id: "all-models", label: "รายชื่อโมเดล" },
+              { id: "chat",       label: "ทดลองแชท" },
+              { id: "logs",       label: "ประวัติระบบ" },
+            ].map((link) => (
+              <a
+                key={link.id}
+                href={`#${link.id}`}
+                className="px-3 py-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
+              >
+                {link.label}
+              </a>
+            ))}
+            <a
+              href="https://github.com/jaturapornchai/bcproxyai"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-2 p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
+              title="GitHub"
+            >
+              <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/>
+              </svg>
+            </a>
+          </div>
+        </div>
+      </nav>
+
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8 space-y-16">
+
+        {/* ── Section 1: Header + Worker Status ──────────────────────────── */}
+        <section id="status" className="animate-fade-in-up">
+          {/* Title */}
+          <div className="text-center mb-10">
+            <div className="inline-flex items-center gap-2 mb-4 px-4 py-1.5 rounded-full border border-indigo-500/30 bg-indigo-500/10 text-xs text-indigo-300">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-400" />
+              </span>
+              Live Dashboard
+            </div>
+            <h1 className="text-5xl sm:text-6xl font-extrabold tracking-tight text-white mb-3">
+              <span className="bg-gradient-to-r from-indigo-400 via-purple-400 to-cyan-400 bg-clip-text text-transparent animate-gradient">
+                BCProxyAI
+              </span>
+            </h1>
+            <p className="text-gray-400 text-lg">Smart AI Gateway — เลือก model ฟรีที่ดีที่สุดให้อัตโนมัติ</p>
+          </div>
+
+          {/* Worker Status Card */}
+          <div className="glass-bright rounded-2xl p-6 neon-border card-3d max-w-3xl mx-auto">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <div className="relative">
+                  <CircleProgress
+                    pct={workerStatus === "running" ? 66 : workerStatus === "idle" ? 100 : 33}
+                    color={workerStatus === "running" ? "#fbbf24" : workerStatus === "idle" ? "#6366f1" : "#ef4444"}
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <GlowDot status={workerStatus} />
+                  </div>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-bold text-white text-lg">Worker</span>
+                    <span className={`text-sm px-2 py-0.5 rounded-full font-medium ${
+                      workerStatus === "running" ? "bg-yellow-500/20 text-yellow-300" :
+                      workerStatus === "idle"    ? "bg-indigo-500/20 text-indigo-300" :
+                                                  "bg-red-500/20 text-red-300"
+                    }`}>
+                      {workerStatus === "running" ? "🟡 กำลังทำงาน" :
+                       workerStatus === "idle"    ? "🟢 ทำงานปกติ" :
+                                                   "🔴 หยุด"}
+                    </span>
+                  </div>
+                  <div className="flex flex-col gap-1 text-xs text-gray-500">
+                    <div className="flex gap-4">
+                      <span>ทำงานล่าสุด: <span className="text-gray-300">{fmtTime(statusData?.worker.lastRun ?? null)}</span></span>
+                      <span>ครั้งถัดไป: <span className="text-gray-300">{fmtTime(statusData?.worker.nextRun ?? null)}</span></span>
+                    </div>
+                    {statusData?.worker.nextRun && workerStatus !== "running" && (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-indigo-400">⏱</span>
+                        <span className="text-indigo-300 font-medium">{fmtCountdown(statusData.worker.nextRun)}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                {lastRefresh && (
+                  <span className="text-xs text-gray-600 hidden sm:block">
+                    รีเฟรชล่าสุด {lastRefresh.toLocaleTimeString("th-TH")}
+                  </span>
+                )}
+                <button
+                  onClick={triggerWorker}
+                  disabled={triggering || workerStatus === "running"}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/40"
+                >
+                  {triggering ? (
+                    <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                  ) : (
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5.636 18.364a9 9 0 010-12.728m12.728 0a9 9 0 010 12.728M12 8v4l2 2" />
+                    </svg>
+                  )}
+                  รันตอนนี้
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Gateway Config */}
+          <GatewayConfigCard />
+
+          {/* Stats Cards */}
+          <StatsCards stats={stats} loading={loading} />
+        </section>
+
+        {/* ── Model Changes Alert ─────────────────────────────────────────── */}
+        {statusData?.modelChanges && (
+          (statusData.modelChanges.new.length > 0 || statusData.modelChanges.missing.length > 0 || statusData.modelChanges.warning.length > 0) && (
+            <section className="animate-fade-in-up space-y-3">
+              {/* โมเดลใหม่ */}
+              {statusData.modelChanges.new.length > 0 && (
+                <div className="glass rounded-2xl p-4 border border-emerald-500/30 bg-emerald-500/5">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-lg">🆕</span>
+                    <span className="font-bold text-emerald-400">โมเดลใหม่ ({statusData.modelChanges.new.length})</span>
+                    <span className="text-xs text-gray-500">ภายใน 24 ชม.</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {statusData.modelChanges.new.map((m) => (
+                      <span key={m.id} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-sm text-emerald-300">
+                        <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                        {m.name}
+                        <span className="text-xs text-emerald-500/60">({m.provider})</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* โมเดลหายชั่วคราว */}
+              {statusData.modelChanges.warning.length > 0 && (
+                <div className="glass rounded-2xl p-4 border border-amber-500/30 bg-amber-500/5">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-lg">⚠️</span>
+                    <span className="font-bold text-amber-400">หายชั่วคราว ({statusData.modelChanges.warning.length})</span>
+                    <span className="text-xs text-gray-500">ไม่เจอ 2-48 ชม. อาจกลับมา</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {statusData.modelChanges.warning.map((m) => (
+                      <span key={m.id} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-sm text-amber-300">
+                        {m.name}
+                        <span className="text-xs text-amber-500/60">({m.provider})</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* โมเดลหายถาวร */}
+              {statusData.modelChanges.missing.length > 0 && (
+                <div className="glass rounded-2xl p-4 border border-red-500/30 bg-red-500/5">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-lg">💀</span>
+                    <span className="font-bold text-red-400">หายถาวร ({statusData.modelChanges.missing.length})</span>
+                    <span className="text-xs text-gray-500">ไม่เจอเกิน 48 ชม.</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {statusData.modelChanges.missing.map((m) => (
+                      <span key={m.id} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-400 line-through opacity-70">
+                        {m.name}
+                        <span className="text-xs text-red-500/60">({m.provider})</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
+          )
+        )}
+
+        {/* ── Section 3: Rankings ──────────────────────────────────────────── */}
+        <section id="rankings" className="animate-fade-in-up stagger-2">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-2xl font-bold text-white flex items-center gap-3">
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500/20 text-indigo-400">
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+              </span>
+              อันดับโมเดล
+            </h2>
+            <span className="text-sm text-gray-500">{leaderboard.length} โมเดลมีคะแนน</span>
+          </div>
+
+          {loading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => <Skeleton key={i} className="h-16 w-full rounded-xl" />)}
+            </div>
+          ) : leaderboard.length === 0 ? (
+            <div className="glass rounded-2xl p-12 text-center text-gray-500">
+              <div className="text-5xl mb-3">🏆</div>
+              <p>ยังไม่มีผล Benchmark — กด &quot;รันตอนนี้&quot; เพื่อเริ่ม</p>
+            </div>
+          ) : (
+            <div className="glass rounded-2xl overflow-hidden">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-white/5 text-xs text-gray-500">
+                    <th className="px-4 py-3 text-left w-8">#</th>
+                    <th className="px-4 py-3 text-left">ชื่อโมเดล</th>
+                    <th className="px-3 py-3 text-left hidden sm:table-cell">ผู้ให้บริการ</th>
+                    <th className="px-4 py-3 text-left">คะแนน</th>
+                    <th className="px-4 py-3 text-right hidden md:table-cell">ความเร็ว</th>
+                    <th className="px-4 py-3 text-right hidden lg:table-cell">ขนาด</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {leaderboard.map((entry, i) => (
+                    <tr key={entry.modelId} className="hover:bg-white/3 transition-colors group">
+                      <td className="px-4 py-4 text-sm font-bold">
+                        {i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : (
+                          <span className="text-gray-600">{entry.rank}</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="font-medium text-gray-100 text-sm group-hover:text-white transition-colors leading-tight">
+                          {entry.name}
+                        </div>
+                        <div className="text-xs text-gray-600 mt-0.5 truncate max-w-[200px]">{entry.modelId}</div>
+                      </td>
+                      <td className="px-3 py-4 hidden sm:table-cell">
+                        <ProviderBadge provider={entry.provider} />
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 min-w-[80px] max-w-[120px] h-2 bg-gray-800 rounded-full overflow-hidden">
+                            <div
+                              className="h-full progress-shimmer rounded-full"
+                              style={{ width: `${entry.percentage}%` }}
+                            />
+                          </div>
+                          <span className="text-sm font-bold text-indigo-300 w-12 text-right">{entry.percentage}%</span>
+                        </div>
+                        <div className="text-xs text-gray-600 mt-0.5">{entry.totalScore}/{entry.maxScore} คะแนน</div>
+                      </td>
+                      <td className="px-4 py-4 text-right hidden md:table-cell">
+                        <span className="text-sm text-gray-400">{fmtMs(entry.avgLatencyMs)}</span>
+                      </td>
+                      <td className="px-4 py-4 text-right hidden lg:table-cell">
+                        <span className={`text-xs px-2 py-0.5 rounded ${TIER_COLORS[entry.tier] ?? TIER_COLORS.small}`}>
+                          {TIER_LABELS[entry.tier] ?? "S"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        {/* ── Section 4: All Models Grid ───────────────────────────────────── */}
+        <ModelGrid
+          sortedModels={sortedModels}
+          availableCount={availableModels.length}
+          cooldownCount={cooldownModels.length}
+          unknownCount={unknownModels.length}
+          loading={loading}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+
+        {/* ── Section 5: Chat ─────────────────────────────────────────────── */}
+        <section id="chat" className="animate-fade-in-up stagger-4">
+          <div className="flex items-center gap-3 mb-6">
+            <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-400">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+            </span>
+            <h2 className="text-2xl font-bold text-white">แชทกับโมเดล</h2>
+          </div>
+          <ChatPanel availableModels={availableModels} />
+        </section>
+
+        {/* ── Section 6: บันทึกการทำงาน ─────────────────────────────────── */}
+        <section id="logs" className="animate-fade-in-up stagger-5">
+          <div className="flex items-center gap-3 mb-4">
+            <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-gray-500/20 text-gray-400">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </span>
+            <span className="font-bold text-white text-2xl">บันทึกการทำงาน</span>
+            <span className="text-xs text-gray-500">{logs.length} รายการล่าสุด</span>
+          </div>
+
+          <div className="glass rounded-2xl overflow-hidden">
+            <div className="font-mono text-xs divide-y divide-white/5 max-h-[500px] overflow-y-auto">
+              {logs.length === 0 ? (
+                <div className="px-4 py-8 text-center text-gray-600">ยังไม่มีบันทึก</div>
+              ) : (
+                logs.map((log, i) => {
+                  const dt = new Date(log.createdAt);
+                  const timeStr = dt.toLocaleString("th-TH", { hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+                  return (
+                    <div key={i} className="flex items-start gap-3 px-4 py-2.5 hover:bg-white/3">
+                      <span className="text-gray-600 shrink-0 w-36">{timeStr}</span>
+                      <span className={`shrink-0 px-1.5 py-0.5 rounded border text-xs ${stepBadge[log.step] ?? stepBadge.worker}`}>
+                        {log.step}
+                      </span>
+                      <span className={`${logLevelStyle[log.level] ?? "text-gray-400"} leading-relaxed`}>
+                        {log.message}
+                      </span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* ── Footer ──────────────────────────────────────────────────────── */}
+        <footer className="text-center text-xs text-gray-700 border-t border-white/5 pt-8 pb-4">
+          BCProxyAI — Smart AI Gateway สำหรับ <span className="text-gray-500">OpenClaw</span> และ <span className="text-gray-500">HiClaw</span>
+        </footer>
+
+      </div>
     </div>
   );
 }

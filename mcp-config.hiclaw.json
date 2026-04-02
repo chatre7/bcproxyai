@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "bcproxyai": {
+      "command": "node",
+      "args": ["dist/mcp/server.js"],
+      "cwd": "<path-to-bcproxyai>",
+      "env": {
+        "OPENROUTER_API_KEY": "<your-openrouter-api-key>",
+        "KILO_API_KEY": "",
+        "GOOGLE_AI_API_KEY": "",
+        "GROQ_API_KEY": "<your-groq-api-key>",
+        "BCPROXYAI_API_URL": "http://localhost:3333"
+      }
+    }
+  }
+}

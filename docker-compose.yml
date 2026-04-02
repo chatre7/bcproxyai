@@ -1,0 +1,13 @@
+name: bcproxyai
+services:
+  bcproxyai:
+    image: bcproxyai
+    build: .
+    ports:
+      - "3333:3000"
+    env_file:
+      - .env.local
+    volumes:
+      - bcproxyai-data:/app/data
+volumes:
+  bcproxyai-data:

@@ -1,0 +1,305 @@
+import { getDb } from "@/lib/db/schema";
+
+const API_KEYS: Record<string, string> = {
+  openrouter: process.env.OPENROUTER_API_KEY ?? "",
+  kilo: process.env.KILO_API_KEY ?? "",
+  google: process.env.GOOGLE_AI_API_KEY ?? "",
+  groq: process.env.GROQ_API_KEY ?? "",
+};
+
+const PROVIDER_URLS: Record<string, string> = {
+  openrouter: "https://openrouter.ai/api/v1/chat/completions",
+  kilo: "https://api.kilo.ai/api/gateway/chat/completions",
+  google:
+    "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+  groq: "https://api.groq.com/openai/v1/chat/completions",
+};
+
+const JUDGE_MODELS = [
+  "qwen/qwen3-235b-a22b:free",
+  "meta-llama/llama-4-scout:free",
+  "google/gemma-3-27b-it:free",
+];
+
+const QUESTIONS = [
+  "สวัสดีครับ วันนี้อากาศเป็นยังไงบ้าง?",
+  "แนะนำอาหารไทยมา 3 เมนู",
+  "กรุงเทพมหานครอยู่ประเทศอะไร?",
+];
+
+const MAX_MODELS_PER_RUN = 3;
+const FAIL_SCORE_THRESHOLD = 3; // < 3/10 = สอบตก, ไม่สอบซ้ำ
+const RETEST_DAYS = 7; // สอบซ้ำได้หลัง 7 วัน
+
+function logWorker(step: string, message: string, level = "info") {
+  try {
+    const db = getDb();
+    db.prepare(
+      "INSERT INTO worker_logs (step, message, level) VALUES (?, ?, ?)"
+    ).run(step, message, level);
+  } catch {
+    // silent
+  }
+}
+
+interface DbModel {
+  id: string;
+  provider: string;
+  model_id: string;
+  benchmark_count: number;
+}
+
+interface BenchmarkSummary {
+  avg_score: number | null;
+  latest_tested_at: string | null;
+}
+
+function buildHeaders(provider: string): Record<string, string> {
+  const key = API_KEYS[provider];
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${key}`,
+  };
+  if (provider === "openrouter") {
+    headers["HTTP-Referer"] = "https://bcproxyai.app";
+    headers["X-Title"] = "BCProxyAI";
+  }
+  return headers;
+}
+
+export async function askModel(
+  provider: string,
+  modelId: string,
+  question: string
+): Promise<{ answer: string; latency: number; error?: string }> {
+  const url = PROVIDER_URLS[provider];
+  if (!url) return { answer: "", latency: 0, error: "unknown provider" };
+
+  const start = Date.now();
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: buildHeaders(provider),
+      body: JSON.stringify({
+        model: modelId,
+        messages: [{ role: "user", content: question }],
+        max_tokens: 300,
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
+    const latency = Date.now() - start;
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { answer: "", latency, error: `HTTP ${res.status}: ${text.slice(0, 200)}` };
+    }
+
+    const json = await res.json();
+    const answer: string =
+      json.choices?.[0]?.message?.content ?? json.choices?.[0]?.text ?? "";
+    return { answer, latency };
+  } catch (err) {
+    const latency = Date.now() - start;
+    const msg = err instanceof Error ? err.message : String(err);
+    return { answer: "", latency, error: msg.slice(0, 200) };
+  }
+}
+
+export async function judgeAnswer(
+  question: string,
+  answer: string
+): Promise<{ score: number; reasoning: string }> {
+  if (!answer) return { score: 0, reasoning: "No answer provided" };
+
+  const prompt = `Score this Thai chatbot answer 0-10.\nQuestion: ${question}\nAnswer: ${answer}\nReturn JSON only: {"score": <number>, "reasoning": "<short explanation>"}`;
+
+  for (const judgeModel of JUDGE_MODELS) {
+    try {
+      const res = await fetch(PROVIDER_URLS.openrouter, {
+        method: "POST",
+        headers: buildHeaders("openrouter"),
+        body: JSON.stringify({
+          model: judgeModel,
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: 200,
+        }),
+        signal: AbortSignal.timeout(20000),
+      });
+
+      if (!res.ok) continue;
+
+      const json = await res.json();
+      let content: string =
+        json.choices?.[0]?.message?.content ?? json.choices?.[0]?.text ?? "";
+
+      // Strip markdown code fences if present
+      content = content.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+
+      // Extract JSON from response
+      const match = content.match(/\{[\s\S]*\}/);
+      if (!match) continue;
+
+      const parsed = JSON.parse(match[0]);
+      const score = Math.min(10, Math.max(0, Number(parsed.score) || 0));
+      const reasoning = String(parsed.reasoning ?? "").slice(0, 500);
+      return { score, reasoning };
+    } catch {
+      continue;
+    }
+  }
+
+  // Fallback: simple heuristic score
+  const hasContent = answer.trim().length > 10;
+  return {
+    score: hasContent ? 5 : 0,
+    reasoning: "Judge unavailable, heuristic score applied",
+  };
+}
+
+export async function runBenchmarks(): Promise<{
+  tested: number;
+  questions: number;
+}> {
+  logWorker("benchmark", "เริ่มรัน benchmark");
+  const db = getDb();
+
+  // Get available models with fewer than 3 benchmark results
+  const models = db
+    .prepare(
+      `
+    SELECT
+      m.id,
+      m.provider,
+      m.model_id,
+      COUNT(b.id) AS benchmark_count
+    FROM models m
+    INNER JOIN health_logs hl ON hl.model_id = m.id
+    LEFT JOIN benchmark_results b ON b.model_id = m.id
+    WHERE hl.status = 'available'
+      AND hl.checked_at = (
+        SELECT MAX(h2.checked_at) FROM health_logs h2 WHERE h2.model_id = m.id
+      )
+    GROUP BY m.id
+    HAVING benchmark_count < 3
+    LIMIT ?
+  `
+    )
+    .all(MAX_MODELS_PER_RUN) as DbModel[];
+
+  logWorker("benchmark", `พบ ${models.length} โมเดลที่ต้อง benchmark`);
+
+  if (models.length === 0) {
+    return { tested: 0, questions: 0 };
+  }
+
+  // Statements
+  const answeredStmt = db.prepare(
+    "SELECT question FROM benchmark_results WHERE model_id = ?"
+  );
+  const summaryStmt = db.prepare(
+    `SELECT AVG(score) AS avg_score, MAX(tested_at) AS latest_tested_at
+     FROM benchmark_results WHERE model_id = ?`
+  );
+  const insertResult = db.prepare(`
+    INSERT INTO benchmark_results (model_id, question, answer, score, max_score, reasoning, latency_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  let totalQuestions = 0;
+  let testedModels = 0;
+
+  for (const model of models) {
+    // ตรวจสอบว่าสอบแล้วและสอบตกซ้ำ — skip ถ้าคะแนนต่ำและยังไม่ถึง 7 วัน
+    const summary = summaryStmt.get(model.id) as BenchmarkSummary;
+    if (summary && summary.avg_score !== null && summary.latest_tested_at) {
+      const avgScore = summary.avg_score;
+      const lastTestedAt = new Date(summary.latest_tested_at + "Z");
+      const daysSince = (Date.now() - lastTestedAt.getTime()) / (1000 * 60 * 60 * 24);
+
+      if (avgScore < FAIL_SCORE_THRESHOLD && daysSince < RETEST_DAYS) {
+        logWorker(
+          "benchmark",
+          `⏭️ ข้าม ${model.model_id} — สอบตก (${avgScore.toFixed(1)}/10) และยังไม่ถึง ${RETEST_DAYS} วัน`
+        );
+        continue;
+      }
+    }
+
+    // ตรวจ 3 คำถามที่สอบแล้ว
+    const answered = new Set(
+      (answeredStmt.all(model.id) as { question: string }[]).map((r) => r.question)
+    );
+    const pending = QUESTIONS.filter((q) => !answered.has(q));
+
+    if (pending.length === 0) {
+      logWorker("benchmark", `⏭️ ข้าม ${model.model_id} — สอบครบแล้ว`);
+      continue;
+    }
+
+    testedModels++;
+    let modelTotalScore = 0;
+    let modelQuestionCount = 0;
+
+    for (const question of pending) {
+      const { answer, latency, error } = await askModel(
+        model.provider,
+        model.model_id,
+        question
+      );
+
+      if (error) {
+        logWorker(
+          "benchmark",
+          `โมเดล ${model.model_id} ผิดพลาด: ${error}`,
+          "warn"
+        );
+      }
+
+      const { score, reasoning } = await judgeAnswer(question, answer);
+
+      try {
+        insertResult.run(
+          model.id,
+          question,
+          answer.slice(0, 2000),
+          score,
+          10,
+          reasoning,
+          latency
+        );
+        totalQuestions++;
+        modelTotalScore += score;
+        modelQuestionCount++;
+      } catch (err) {
+        logWorker(
+          "benchmark",
+          `DB insert error สำหรับ ${model.id}: ${err}`,
+          "error"
+        );
+      }
+    }
+
+    // สรุปผลรายโมเดล
+    if (modelQuestionCount > 0) {
+      const avgScore = modelTotalScore / modelQuestionCount;
+      if (avgScore >= 5) {
+        logWorker(
+          "benchmark",
+          `✅ สอบผ่าน: ${model.model_id} — คะแนน ${avgScore.toFixed(1)}/10`,
+          "success"
+        );
+      } else {
+        logWorker(
+          "benchmark",
+          `❌ สอบตก: ${model.model_id} — คะแนน ${avgScore.toFixed(1)}/10`,
+          "warn"
+        );
+      }
+    }
+  }
+
+  const msg = `Benchmark เสร็จ: ทดสอบ ${testedModels} โมเดล, ${totalQuestions} คำถาม`;
+  logWorker("benchmark", msg);
+
+  return { tested: testedModels, questions: totalQuestions };
+}

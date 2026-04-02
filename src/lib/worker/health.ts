@@ -1,0 +1,386 @@
+import { getDb } from "@/lib/db/schema";
+
+const API_KEYS: Record<string, string> = {
+  openrouter: process.env.OPENROUTER_API_KEY ?? "",
+  kilo: process.env.KILO_API_KEY ?? "",
+  google: process.env.GOOGLE_AI_API_KEY ?? "",
+  groq: process.env.GROQ_API_KEY ?? "",
+};
+
+const PROVIDER_URLS: Record<string, string> = {
+  openrouter: "https://openrouter.ai/api/v1/chat/completions",
+  kilo: "https://api.kilo.ai/api/gateway/chat/completions",
+  google:
+    "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+  groq: "https://api.groq.com/openai/v1/chat/completions",
+};
+
+const NON_CHAT_KEYWORDS = [
+  "whisper",
+  "lyria",
+  "orpheus",
+  "prompt-guard",
+  "safeguard",
+  "compound",
+  "allam",
+];
+
+function logWorker(step: string, message: string, level = "info") {
+  try {
+    const db = getDb();
+    db.prepare(
+      "INSERT INTO worker_logs (step, message, level) VALUES (?, ?, ?)"
+    ).run(step, message, level);
+  } catch {
+    // silent
+  }
+}
+
+export function isNonChatModel(modelId: string): boolean {
+  const lower = modelId.toLowerCase();
+  return NON_CHAT_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
+interface DbModel {
+  id: string;
+  provider: string;
+  model_id: string;
+  context_length: number;
+  supports_tools: number;
+  supports_vision: number;
+}
+
+export async function pingModel(
+  model: DbModel
+): Promise<{ status: string; latency: number; error?: string }> {
+  const url = PROVIDER_URLS[model.provider];
+  if (!url) return { status: "error", latency: 0, error: "unknown provider" };
+
+  const key = API_KEYS[model.provider];
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${key}`,
+  };
+  if (model.provider === "openrouter") {
+    headers["HTTP-Referer"] = "https://bcproxyai.app";
+    headers["X-Title"] = "BCProxyAI";
+  }
+
+  const body = JSON.stringify({
+    model: model.model_id,
+    messages: [{ role: "user", content: "hi" }],
+    max_tokens: 5,
+  });
+
+  const start = Date.now();
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body,
+      signal: AbortSignal.timeout(15000),
+    });
+    const latency = Date.now() - start;
+
+    if (res.ok) {
+      return { status: "available", latency };
+    }
+
+    // Check for rate limit
+    const text = await res.text().catch(() => "");
+    const isRateLimit =
+      res.status === 429 ||
+      text.toLowerCase().includes("rate limit") ||
+      text.toLowerCase().includes("rate_limit");
+
+    if (isRateLimit) {
+      return { status: "rate_limited", latency, error: `429 rate limited` };
+    }
+
+    return {
+      status: "error",
+      latency,
+      error: `HTTP ${res.status}: ${text.slice(0, 200)}`,
+    };
+  } catch (err) {
+    const latency = Date.now() - start;
+    const msg = err instanceof Error ? err.message : String(err);
+    const isTimeout = msg.includes("timeout") || msg.includes("TimeoutError");
+    return {
+      status: "error",
+      latency,
+      error: isTimeout ? "timeout after 15s" : msg.slice(0, 200),
+    };
+  }
+}
+
+// Tiny 1x1 red PNG (68 bytes) as base64 for vision test
+const TINY_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
+
+export async function testVisionSupport(
+  model: DbModel
+): Promise<0 | 1 | -1> {
+  const url = PROVIDER_URLS[model.provider];
+  if (!url) return -1;
+
+  const key = API_KEYS[model.provider];
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${key}`,
+  };
+  if (model.provider === "openrouter") {
+    headers["HTTP-Referer"] = "https://bcproxyai.app";
+    headers["X-Title"] = "BCProxyAI";
+  }
+
+  const body = JSON.stringify({
+    model: model.model_id,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "What color is this?" },
+          {
+            type: "image_url",
+            image_url: {
+              url: `data:image/png;base64,${TINY_PNG_BASE64}`,
+            },
+          },
+        ],
+      },
+    ],
+    max_tokens: 10,
+  });
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body,
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (res.ok) return 1;
+
+    const text = await res.text().catch(() => "");
+    const lower = text.toLowerCase();
+    const isVisionError =
+      lower.includes("image") ||
+      lower.includes("vision") ||
+      lower.includes("multimodal") ||
+      lower.includes("not support") ||
+      lower.includes("unsupported") ||
+      lower.includes("content type");
+
+    if (isVisionError) return 0;
+
+    // Other error (auth, rate limit etc.) — skip
+    return -1;
+  } catch {
+    return -1;
+  }
+}
+
+export async function testToolSupport(
+  model: DbModel
+): Promise<0 | 1 | -1> {
+  const url = PROVIDER_URLS[model.provider];
+  if (!url) return -1;
+
+  const key = API_KEYS[model.provider];
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${key}`,
+  };
+  if (model.provider === "openrouter") {
+    headers["HTTP-Referer"] = "https://bcproxyai.app";
+    headers["X-Title"] = "BCProxyAI";
+  }
+
+  const body = JSON.stringify({
+    model: model.model_id,
+    messages: [{ role: "user", content: "hi" }],
+    tools: [
+      {
+        type: "function",
+        function: {
+          name: "test_fn",
+          description: "test",
+          parameters: { type: "object", properties: {} },
+        },
+      },
+    ],
+    max_tokens: 5,
+  });
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body,
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (res.ok) return 1;
+
+    const text = await res.text().catch(() => "");
+    const lower = text.toLowerCase();
+    const isToolError =
+      lower.includes("tool") ||
+      lower.includes("function") ||
+      lower.includes("not support") ||
+      lower.includes("unsupported");
+
+    if (isToolError) return 0;
+
+    // Other error (auth, rate limit etc.) — skip
+    return -1;
+  } catch {
+    return -1;
+  }
+}
+
+async function runConcurrent<T>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<void>
+): Promise<void> {
+  let idx = 0;
+  async function worker() {
+    while (idx < items.length) {
+      const i = idx++;
+      await fn(items[i]);
+    }
+  }
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, worker);
+  await Promise.all(workers);
+}
+
+export async function checkHealth(): Promise<{
+  checked: number;
+  available: number;
+  cooldown: number;
+}> {
+  logWorker("health", "Starting health check");
+  const db = getDb();
+
+  // Get models eligible for health check
+  const models = db
+    .prepare(
+      `
+    SELECT m.id, m.provider, m.model_id, m.context_length, COALESCE(m.supports_tools, -1) AS supports_tools, COALESCE(m.supports_vision, -1) AS supports_vision
+    FROM models m
+    WHERE m.context_length >= 32000
+      AND NOT EXISTS (
+        SELECT 1 FROM health_logs h
+        WHERE h.model_id = m.id
+          AND h.cooldown_until IS NOT NULL
+          AND h.cooldown_until > datetime('now')
+        ORDER BY h.checked_at DESC
+        LIMIT 1
+      )
+  `
+    )
+    .all() as DbModel[];
+
+  // Filter out non-chat models
+  const eligible = models.filter((m) => !isNonChatModel(m.model_id));
+
+  logWorker("health", `Checking ${eligible.length} eligible models`);
+
+  let available = 0;
+  let cooldownCount = 0;
+  let checked = 0;
+
+  const insertLog = db.prepare(`
+    INSERT INTO health_logs (model_id, status, latency_ms, error, cooldown_until)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+
+  const updateToolSupport = db.prepare(
+    "UPDATE models SET supports_tools = ? WHERE id = ?"
+  );
+
+  const updateVisionSupport = db.prepare(
+    "UPDATE models SET supports_vision = ? WHERE id = ?"
+  );
+
+  // Collect available models that need tool/vision testing
+  const availableForToolTest: DbModel[] = [];
+  const availableForVisionTest: DbModel[] = [];
+
+  await runConcurrent(eligible, 5, async (model) => {
+    const result = await pingModel(model);
+    checked++;
+
+    let cooldownUntil: string | null = null;
+    if (result.status === "rate_limited" || result.status === "error") {
+      // cooldown_until = now + 2 hours
+      const t = new Date(Date.now() + 2 * 60 * 60 * 1000);
+      cooldownUntil = t.toISOString().replace("T", " ").slice(0, 19);
+      cooldownCount++;
+    } else {
+      available++;
+      if (model.supports_tools === -1) {
+        availableForToolTest.push(model);
+      }
+      if (model.supports_vision === -1) {
+        availableForVisionTest.push(model);
+      }
+    }
+
+    try {
+      insertLog.run(
+        model.id,
+        result.status,
+        result.latency,
+        result.error ?? null,
+        cooldownUntil
+      );
+    } catch (err) {
+      logWorker("health", `DB insert error for ${model.id}: ${err}`, "error");
+    }
+  });
+
+  // Tool support detection — max 3 per cycle
+  const toolTestCandidates = availableForToolTest.slice(0, 3);
+  for (const model of toolTestCandidates) {
+    const supportsTools = await testToolSupport(model);
+    if (supportsTools !== -1) {
+      try {
+        updateToolSupport.run(supportsTools, model.id);
+        const icon = supportsTools === 1 ? "✅" : "❌";
+        logWorker(
+          "health",
+          `🔧 ${model.model_id}: tools ${icon}`
+        );
+      } catch (err) {
+        logWorker("health", `Tool update error for ${model.id}: ${err}`, "error");
+      }
+    }
+  }
+
+  // Vision support detection — max 3 per cycle
+  const visionTestCandidates = availableForVisionTest.slice(0, 3);
+  for (const model of visionTestCandidates) {
+    const supportsVision = await testVisionSupport(model);
+    if (supportsVision !== -1) {
+      try {
+        updateVisionSupport.run(supportsVision, model.id);
+        const icon = supportsVision === 1 ? "✅" : "❌";
+        logWorker(
+          "health",
+          `👁️ ${model.model_id}: vision ${icon}`
+        );
+      } catch (err) {
+        logWorker("health", `Vision update error for ${model.id}: ${err}`, "error");
+      }
+    }
+  }
+
+  const msg = `Health check done: checked=${checked}, available=${available}, cooldown=${cooldownCount}`;
+  logWorker("health", msg);
+
+  return { checked, available, cooldown: cooldownCount };
+}
