@@ -82,10 +82,10 @@ function getAvailableModels(caps: RequestCapabilities): ModelRow[] {
   if (caps.hasImages) filters.push("m.supports_vision = 1");
 
   const whereClause = filters.join(" AND ");
-  // For json_schema: prefer large tier but don't exclude others
+  // Prioritize: benchmarked models first (score > 0), then by score, then large context, then latency
   const orderClause = caps.needsJsonSchema
-    ? "CASE WHEN m.tier = 'large' THEN 0 ELSE 1 END ASC, avg_score DESC, avg_latency ASC"
-    : "avg_score DESC, avg_latency ASC";
+    ? "CASE WHEN m.tier = 'large' THEN 0 ELSE 1 END ASC, CASE WHEN avg_score > 0 THEN 0 ELSE 1 END ASC, avg_score DESC, m.context_length DESC, avg_latency ASC"
+    : "CASE WHEN avg_score > 0 THEN 0 ELSE 1 END ASC, avg_score DESC, m.context_length DESC, avg_latency ASC";
 
   const rows = db
     .prepare(
@@ -97,6 +97,7 @@ function getAvailableModels(caps: RequestCapabilities): ModelRow[] {
         m.supports_tools,
         m.supports_vision,
         m.tier,
+        m.context_length,
         COALESCE(b.avg_score, 0) as avg_score,
         COALESCE(b.avg_latency, 9999999) as avg_latency,
         h.status as health_status,
@@ -167,10 +168,12 @@ function extractUserMessage(body: Record<string, unknown>): string | null {
   return JSON.stringify(last.content).slice(0, 500);
 }
 
-function logCooldown(modelId: string, errorMsg: string) {
+function logCooldown(modelId: string, errorMsg: string, shortCooldown = false) {
   try {
     const db = getDb();
-    const cooldownUntil = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+    // 413 = request too large → short cooldown (15 min), 429/5xx = rate limit → 2 hours
+    const cooldownMs = shortCooldown ? 15 * 60 * 1000 : 2 * 60 * 60 * 1000;
+    const cooldownUntil = new Date(Date.now() + cooldownMs).toISOString();
     db.prepare(
       `INSERT INTO health_logs (model_id, status, error, cooldown_until, checked_at)
        VALUES (?, 'rate_limited', ?, ?, datetime('now'))`
@@ -222,7 +225,7 @@ function selectModelsByMode(
       .prepare(
         `
         SELECT
-          m.id, m.provider, m.model_id, m.supports_tools, m.supports_vision, m.tier,
+          m.id, m.provider, m.model_id, m.supports_tools, m.supports_vision, m.tier, m.context_length,
           COALESCE(b.avg_score, 0) as avg_score,
           COALESCE(b.avg_latency, 9999999) as avg_latency,
           h.status as health_status,
@@ -392,9 +395,11 @@ export async function POST(req: NextRequest) {
           const errText = await response.text();
           lastError = `${provider}/${actualModelId}: HTTP ${response.status} ${errText}`;
 
-          // Log cooldown for rate limit or request too large
-          if (response.status === 429 || response.status === 413) {
-            logCooldown(dbModelId, `HTTP ${response.status}: ${errText}`);
+          // Log cooldown: 413 = short (15 min), 429 = long (2 hours)
+          if (response.status === 413) {
+            logCooldown(dbModelId, `HTTP 413: ${errText}`, true);
+          } else if (response.status === 429) {
+            logCooldown(dbModelId, `HTTP 429: ${errText}`);
           }
           continue;
         }
