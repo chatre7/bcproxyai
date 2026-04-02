@@ -7,6 +7,7 @@ const TABS = [
   { id: "install", label: "การติดตั้ง" },
   { id: "api", label: "API Reference" },
   { id: "troubleshoot", label: "แก้ไขปัญหา" },
+  { id: "about", label: "ระบบ Benchmark" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -453,6 +454,134 @@ docker compose up -d`}</Code>
   );
 }
 
+// ─── Tab: ระบบ Benchmark ─────────────────────────────────────────────────────
+
+function AboutGuide() {
+  return (
+    <div className="space-y-6">
+      <div>
+        <SectionTitle>ระบบ Benchmark ทำงานอย่างไร?</SectionTitle>
+        <Paragraph>
+          BCProxyAI มีระบบสอบวัดผลโมเดล AI อัตโนมัติ เพื่อคัดเฉพาะโมเดลที่ตอบภาษาไทยได้ดี
+          ใช้ระบบ <span className="text-indigo-300 font-medium">&quot;ให้ AI ตรวจข้อสอบ AI&quot;</span> — โมเดลหนึ่งตอบคำถาม
+          อีกโมเดลหนึ่งเป็นคุณครูตรวจให้คะแนน
+        </Paragraph>
+      </div>
+
+      <div className="glass rounded-xl p-5 border border-indigo-500/20">
+        <div className="text-center mb-4">
+          <div className="text-xs text-gray-500 uppercase tracking-wider mb-2">ขั้นตอนการสอบ</div>
+          <div className="flex items-center justify-center gap-3 flex-wrap">
+            <div className="glass rounded-lg px-4 py-2 border border-blue-500/30">
+              <div className="text-xs text-blue-300">นักเรียน</div>
+              <div className="text-sm font-bold text-white">โมเดลที่ถูกสอบ</div>
+            </div>
+            <span className="text-gray-600">&rarr;</span>
+            <div className="glass rounded-lg px-4 py-2 border border-amber-500/30">
+              <div className="text-xs text-amber-300">ข้อสอบ</div>
+              <div className="text-sm font-bold text-white">3 คำถามภาษาไทย</div>
+            </div>
+            <span className="text-gray-600">&rarr;</span>
+            <div className="glass rounded-lg px-4 py-2 border border-emerald-500/30">
+              <div className="text-xs text-emerald-300">คุณครู</div>
+              <div className="text-sm font-bold text-white">AI Judge ให้คะแนน</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <SectionTitle>ข้อสอบ (3 ข้อ)</SectionTitle>
+        <div className="space-y-2">
+          {[
+            { q: "สวัสดีครับ วันนี้อากาศเป็นยังไงบ้าง?", purpose: "ทดสอบการทักทาย + ตอบคำถามทั่วไป" },
+            { q: "แนะนำอาหารไทยมา 3 เมนู", purpose: "ทดสอบความรู้วัฒนธรรมไทย + การจัดรูปแบบคำตอบ" },
+            { q: "กรุงเทพมหานครอยู่ประเทศอะไร?", purpose: "ทดสอบความรู้ทั่วไป + ตอบถูกต้อง" },
+          ].map((item, i) => (
+            <div key={i} className="glass rounded-lg p-3 border border-white/5">
+              <div className="flex items-start gap-2">
+                <span className="text-indigo-300 font-bold shrink-0">ข้อ {i + 1}.</span>
+                <div>
+                  <div className="text-sm text-white">&quot;{item.q}&quot;</div>
+                  <div className="text-xs text-gray-500 mt-1">{item.purpose}</div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <SectionTitle>คุณครูผู้ตรวจ (AI Judge)</SectionTitle>
+        <Paragraph>
+          ระบบใช้โมเดล AI ฟรีจาก OpenRouter เป็น &quot;คุณครู&quot; ตรวจคำตอบและให้คะแนน 0-10
+          โดยเรียงลำดับความน่าเชื่อถือดังนี้ (ถ้าตัวแรกไม่ว่าง จะใช้ตัวถัดไป):
+        </Paragraph>
+        <div className="space-y-2">
+          {[
+            { name: "Qwen3 235B A22B", id: "qwen/qwen3-235b-a22b:free", desc: "โมเดลใหญ่ที่สุด น่าเชื่อถือที่สุด", rank: 1 },
+            { name: "Llama 4 Scout", id: "meta-llama/llama-4-scout:free", desc: "โมเดลสำรองลำดับที่ 2", rank: 2 },
+            { name: "Gemma 3 27B", id: "google/gemma-3-27b-it:free", desc: "โมเดลสำรองลำดับที่ 3", rank: 3 },
+          ].map((judge) => (
+            <div key={judge.id} className="flex items-center gap-3 glass rounded-lg p-3 border border-white/5">
+              <div className="h-8 w-8 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                <span className="text-xs font-bold text-emerald-300">#{judge.rank}</span>
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-white">{judge.name}</div>
+                <div className="text-xs text-gray-500 truncate">{judge.id}</div>
+                <div className="text-xs text-gray-600">{judge.desc}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <Paragraph>
+          ถ้าไม่มีคุณครูว่างเลย (ทั้ง 3 ตัวติด limit) ระบบจะใช้
+          <span className="text-amber-300"> Heuristic Score</span> แทน — ถ้าคำตอบยาวกว่า 10 ตัวอักษร ให้ 5/10
+        </Paragraph>
+      </div>
+
+      <div>
+        <SectionTitle>เกณฑ์การให้คะแนน</SectionTitle>
+        <Paragraph>คุณครูจะให้คะแนน 0-10 พร้อมเหตุผลสั้นๆ:</Paragraph>
+        <table className="w-full">
+          <tbody>
+            <TableRow label="8-10 คะแนน" value="ตอบถูกต้อง เป็นธรรมชาติ ภาษาไทยดี" />
+            <TableRow label="5-7 คะแนน" value="ตอบได้ แต่อาจมีบางจุดไม่สมบูรณ์" />
+            <TableRow label="3-4 คะแนน" value="ตอบได้บ้าง แต่คุณภาพต่ำ" />
+            <TableRow label="0-2 คะแนน" value="ตอบผิด ตอบไม่เป็นภาษาไทย หรือไม่ตอบ" />
+          </tbody>
+        </table>
+      </div>
+
+      <div>
+        <SectionTitle>กฎการสอบ</SectionTitle>
+        <ul className="list-disc list-inside text-sm text-gray-400 space-y-2 ml-2">
+          <li><span className="text-emerald-300">สอบผ่าน</span> = คะแนนเฉลี่ย &ge; 5/10 — โมเดลพร้อมใช้งาน</li>
+          <li><span className="text-red-300">สอบตก</span> = คะแนนเฉลี่ย &lt; 3/10 — ไม่สอบซ้ำภายใน 7 วัน</li>
+          <li>สอบครบ 3 ข้อแล้ว จะไม่สอบซ้ำอีก (ประหยัด token)</li>
+          <li>สอบสูงสุด 3 โมเดลต่อรอบ (ทุก 1 ชม.)</li>
+          <li>เฉพาะโมเดลที่ผ่าน Health Check แล้วเท่านั้นจึงจะถูกสอบ</li>
+        </ul>
+      </div>
+
+      <div>
+        <SectionTitle>ปรับแต่งได้</SectionTitle>
+        <Paragraph>
+          แก้ไขไฟล์ <code className="text-indigo-300">src/lib/worker/benchmark.ts</code>:
+        </Paragraph>
+        <ul className="list-disc list-inside text-sm text-gray-400 space-y-1 ml-2">
+          <li><code className="text-indigo-300">QUESTIONS</code> — เปลี่ยนคำถามข้อสอบ</li>
+          <li><code className="text-indigo-300">JUDGE_MODELS</code> — เปลี่ยนคุณครูผู้ตรวจ</li>
+          <li><code className="text-indigo-300">MAX_MODELS_PER_RUN</code> — จำนวนโมเดลที่สอบต่อรอบ</li>
+          <li><code className="text-indigo-300">FAIL_SCORE_THRESHOLD</code> — เกณฑ์สอบตก (ปัจจุบัน 3/10)</li>
+          <li><code className="text-indigo-300">RETEST_DAYS</code> — สอบซ้ำได้หลังกี่วัน (ปัจจุบัน 7 วัน)</li>
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Modal ──────────────────────────────────────────────────────────────
 
 export function GuideModal({ onClose }: { onClose: () => void }) {
@@ -511,6 +640,7 @@ export function GuideModal({ onClose }: { onClose: () => void }) {
           {activeTab === "install" && <InstallGuide />}
           {activeTab === "api" && <ApiGuide />}
           {activeTab === "troubleshoot" && <TroubleshootGuide />}
+          {activeTab === "about" && <AboutGuide />}
         </div>
       </div>
     </div>
