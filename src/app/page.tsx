@@ -397,12 +397,18 @@ export default function Dashboard() {
                       <span>ทำงานล่าสุด: <span className="text-gray-300">{fmtTime(statusData?.worker.lastRun ?? null)}</span></span>
                       <span>ครั้งถัดไป: <span className="text-gray-300">{fmtTime(statusData?.worker.nextRun ?? null)}</span></span>
                     </div>
-                    {statusData?.worker.nextRun && workerStatus !== "running" && (
+                    <div className="flex items-center gap-3 flex-wrap">
+                      {statusData?.worker.nextRun && workerStatus !== "running" && (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-indigo-400">⏱</span>
+                          <span className="text-indigo-300 font-medium">{fmtCountdown(statusData.worker.nextRun)}</span>
+                        </div>
+                      )}
                       <div className="flex items-center gap-1.5">
-                        <span className="text-indigo-400">⏱</span>
-                        <span className="text-indigo-300 font-medium">{fmtCountdown(statusData.worker.nextRun)}</span>
+                        <span className="text-amber-400">📝</span>
+                        <span className="text-amber-300">คุมสอบ: <span className="font-medium">DeepSeek Chat</span></span>
                       </div>
-                    )}
+                    </div>
                   </div>
                 </div>
               </div>
