@@ -93,6 +93,9 @@ export const PROVIDER_COLORS: Record<string, { text: string; bg: string; border:
   kilo:       { text: "text-purple-300", bg: "bg-purple-500/20", border: "border-purple-500/40", glow: "rgba(168,85,247,0.5)" },
   google:     { text: "text-emerald-300", bg: "bg-emerald-500/20", border: "border-emerald-500/40", glow: "rgba(52,211,153,0.5)" },
   groq:       { text: "text-orange-300", bg: "bg-orange-500/20", border: "border-orange-500/40", glow: "rgba(251,146,60,0.5)" },
+  cerebras:   { text: "text-rose-300", bg: "bg-rose-500/20", border: "border-rose-500/40", glow: "rgba(244,63,94,0.5)" },
+  sambanova:  { text: "text-teal-300", bg: "bg-teal-500/20", border: "border-teal-500/40", glow: "rgba(20,184,166,0.5)" },
+  mistral:    { text: "text-sky-300", bg: "bg-sky-500/20", border: "border-sky-500/40", glow: "rgba(56,189,248,0.5)" },
 };
 
 export const TIER_LABELS: Record<string, string> = { large: "L", medium: "M", small: "S" };
@@ -162,7 +165,7 @@ export function GlowDot({ status }: { status: "available" | "cooldown" | "unknow
 
 export function ProviderBadge({ provider }: { provider: string }) {
   const c = PROVIDER_COLORS[provider] ?? { text: "text-gray-300", bg: "bg-gray-700/40", border: "border-gray-600/40" };
-  const labels: Record<string, string> = { openrouter: "OR", kilo: "Kilo", google: "GG", groq: "Groq" };
+  const labels: Record<string, string> = { openrouter: "OR", kilo: "Kilo", google: "GG", groq: "Groq", cerebras: "Cerebras", sambanova: "SN", mistral: "Mistral" };
   return (
     <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-bold ${c.text} ${c.bg} border ${c.border}`}>
       {labels[provider] ?? provider}

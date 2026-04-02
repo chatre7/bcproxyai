@@ -4,6 +4,9 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY ?? "";
 const KILO_API_KEY = process.env.KILO_API_KEY ?? "";
 const GOOGLE_AI_API_KEY = process.env.GOOGLE_AI_API_KEY ?? "";
 const GROQ_API_KEY = process.env.GROQ_API_KEY ?? "";
+const CEREBRAS_API_KEY = process.env.CEREBRAS_API_KEY ?? "";
+const SAMBANOVA_API_KEY = process.env.SAMBANOVA_API_KEY ?? "";
+const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY ?? "";
 
 interface ModelRow {
   id: string;
@@ -153,18 +156,115 @@ async function fetchGroqModels(): Promise<ModelRow[]> {
   }
 }
 
+const NON_CHAT_KEYWORDS = ["whisper", "lyria", "orpheus", "prompt-guard", "safeguard", "compound", "allam"];
+
+async function fetchCerebrasModels(): Promise<ModelRow[]> {
+  if (!CEREBRAS_API_KEY) return [];
+  try {
+    const res = await fetch("https://api.cerebras.ai/v1/models", {
+      headers: { Authorization: `Bearer ${CEREBRAS_API_KEY}` },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    const models: ModelRow[] = [];
+    for (const m of json.data ?? []) {
+      const mid: string = m.id ?? "";
+      // Skip non-chat models (whisper, etc.)
+      if (NON_CHAT_KEYWORDS.some((kw) => mid.toLowerCase().includes(kw))) continue;
+      const ctx = m.context_window ?? m.context_length ?? m.max_context_length ?? 0;
+      models.push({
+        id: `cerebras:${mid}`,
+        name: m.id,
+        provider: "cerebras",
+        model_id: mid,
+        context_length: ctx,
+        tier: calcTier(ctx),
+        description: undefined,
+      });
+    }
+    return models;
+  } catch (err) {
+    logWorker("scan", `Cerebras fetch error: ${err}`, "error");
+    return [];
+  }
+}
+
+async function fetchSambaNovaModels(): Promise<ModelRow[]> {
+  if (!SAMBANOVA_API_KEY) return [];
+  try {
+    const res = await fetch("https://api.sambanova.ai/v1/models", {
+      headers: { Authorization: `Bearer ${SAMBANOVA_API_KEY}` },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    const models: ModelRow[] = [];
+    for (const m of json.data ?? []) {
+      const mid: string = m.id ?? "";
+      const ctx = m.context_window ?? m.context_length ?? m.max_context_length ?? m.max_tokens ?? 0;
+      models.push({
+        id: `sambanova:${mid}`,
+        name: m.id,
+        provider: "sambanova",
+        model_id: mid,
+        context_length: ctx,
+        tier: calcTier(ctx),
+        description: undefined,
+      });
+    }
+    return models;
+  } catch (err) {
+    logWorker("scan", `SambaNova fetch error: ${err}`, "error");
+    return [];
+  }
+}
+
+async function fetchMistralModels(): Promise<ModelRow[]> {
+  if (!MISTRAL_API_KEY) return [];
+  try {
+    const res = await fetch("https://api.mistral.ai/v1/models", {
+      headers: { Authorization: `Bearer ${MISTRAL_API_KEY}` },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    const models: ModelRow[] = [];
+    for (const m of json.data ?? []) {
+      const mid: string = m.id ?? "";
+      const ctx = m.max_context_length ?? m.context_window ?? m.context_length ?? 0;
+      models.push({
+        id: `mistral:${mid}`,
+        name: m.id,
+        provider: "mistral",
+        model_id: mid,
+        context_length: ctx,
+        tier: calcTier(ctx),
+        description: undefined,
+      });
+    }
+    return models;
+  } catch (err) {
+    logWorker("scan", `Mistral fetch error: ${err}`, "error");
+    return [];
+  }
+}
+
 export async function scanModels(): Promise<{ found: number; new: number; disappeared: number }> {
   logWorker("scan", "Starting model scan");
   const db = getDb();
 
-  const [orModels, kiloModels, googleModels, groqModels] = await Promise.all([
+  const [orModels, kiloModels, googleModels, groqModels, cerebrasModels, sambaNovaModels, mistralModels] = await Promise.all([
     fetchOpenRouterModels(),
     fetchKiloModels(),
     fetchGoogleModels(),
     fetchGroqModels(),
+    fetchCerebrasModels(),
+    fetchSambaNovaModels(),
+    fetchMistralModels(),
   ]);
 
-  const allModels = [...orModels, ...kiloModels, ...googleModels, ...groqModels];
+  const allModels = [...orModels, ...kiloModels, ...googleModels, ...groqModels, ...cerebrasModels, ...sambaNovaModels, ...mistralModels];
   const foundIds = new Set(allModels.map(m => m.id));
   let newCount = 0;
 
@@ -223,7 +323,7 @@ export async function scanModels(): Promise<{ found: number; new: number; disapp
     }
   } catch { /* silent */ }
 
-  const msg = `Scan: พบ ${allModels.length} (OR=${orModels.length}, Kilo=${kiloModels.length}, Google=${googleModels.length}, Groq=${groqModels.length}) | ใหม่ ${newCount} | หายไป ${disappearedCount}`;
+  const msg = `Scan: พบ ${allModels.length} (OR=${orModels.length}, Kilo=${kiloModels.length}, Google=${googleModels.length}, Groq=${groqModels.length}, Cerebras=${cerebrasModels.length}, SambaNova=${sambaNovaModels.length}, Mistral=${mistralModels.length}) | ใหม่ ${newCount} | หายไป ${disappearedCount}`;
   logWorker("scan", msg);
 
   return { found: allModels.length, new: newCount, disappeared: disappearedCount };

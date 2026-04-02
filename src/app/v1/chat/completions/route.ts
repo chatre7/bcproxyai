@@ -9,6 +9,9 @@ const PROVIDER_URLS: Record<string, string> = {
   openrouter: "https://openrouter.ai/api/v1/chat/completions",
   kilo: "https://api.kilo.ai/api/gateway/chat/completions",
   groq: "https://api.groq.com/openai/v1/chat/completions",
+  cerebras: "https://api.cerebras.ai/v1/chat/completions",
+  sambanova: "https://api.sambanova.ai/v1/chat/completions",
+  mistral: "https://api.mistral.ai/v1/chat/completions",
 };
 
 // Provider API keys from env
@@ -20,6 +23,12 @@ function getApiKey(provider: string): string {
       return process.env.KILO_API_KEY || "";
     case "groq":
       return process.env.GROQ_API_KEY || "";
+    case "cerebras":
+      return process.env.CEREBRAS_API_KEY || "";
+    case "sambanova":
+      return process.env.SAMBANOVA_API_KEY || "";
+    case "mistral":
+      return process.env.MISTRAL_API_KEY || "";
     default:
       return "";
   }
@@ -205,7 +214,7 @@ function parseModelField(model: string): {
   if (model === "bcproxy/thai") return { mode: "thai" };
 
   // openrouter/xxx, kilo/xxx, groq/xxx
-  const providerMatch = model.match(/^(openrouter|kilo|groq)\/(.+)$/);
+  const providerMatch = model.match(/^(openrouter|kilo|groq|cerebras|sambanova|mistral)\/(.+)$/);
   if (providerMatch) {
     return { mode: "direct", provider: providerMatch[1], modelId: providerMatch[2] };
   }

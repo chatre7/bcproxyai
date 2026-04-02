@@ -5,6 +5,9 @@ const API_KEYS: Record<string, string> = {
   kilo: process.env.KILO_API_KEY ?? "",
   google: process.env.GOOGLE_AI_API_KEY ?? "",
   groq: process.env.GROQ_API_KEY ?? "",
+  cerebras: process.env.CEREBRAS_API_KEY ?? "",
+  sambanova: process.env.SAMBANOVA_API_KEY ?? "",
+  mistral: process.env.MISTRAL_API_KEY ?? "",
 };
 
 const PROVIDER_URLS: Record<string, string> = {
@@ -13,6 +16,9 @@ const PROVIDER_URLS: Record<string, string> = {
   google:
     "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
   groq: "https://api.groq.com/openai/v1/chat/completions",
+  cerebras: "https://api.cerebras.ai/v1/chat/completions",
+  sambanova: "https://api.sambanova.ai/v1/chat/completions",
+  mistral: "https://api.mistral.ai/v1/chat/completions",
 };
 
 const JUDGE_MODELS = [
