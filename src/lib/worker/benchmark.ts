@@ -234,7 +234,7 @@ export async function runBenchmarks(): Promise<{
   let testedModels = 0;
 
   // Parallel benchmark — 5 models at a time
-  const CONCURRENCY = 10;
+  const CONCURRENCY = 20;
   let idx = 0;
   async function benchmarkWorker() {
     while (idx < models.length) {

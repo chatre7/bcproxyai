@@ -347,15 +347,6 @@ async function forwardToProvider(
 
   const requestBody: Record<string, unknown> = { ...body, model: actualModelId };
 
-  // Inject friendly Thai system prompt if no system message exists
-  const messages = requestBody.messages as Array<{ role: string; content: unknown }> | undefined;
-  if (messages && !messages.some(m => m.role === "system")) {
-    messages.unshift({
-      role: "system",
-      content: "คุณคือผู้ช่วย AI ที่เป็นมิตร ตอบเป็นภาษาไทยเสมอ พูดเหมือนเพื่อนคุยกัน สั้น กระชับ เข้าใจง่าย ไม่ต้องใช้คำทางการ ใช้อีโมจิได้บ้าง",
-    });
-  }
-
   // Ollama: set large context window via options.num_ctx
   if (provider === "ollama") {
     requestBody.options = { ...(requestBody.options as Record<string, unknown> ?? {}), num_ctx: 65536 };
