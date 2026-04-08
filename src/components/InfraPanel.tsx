@@ -4,6 +4,21 @@ import { useCallback, useEffect, useState } from "react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+interface K6Run {
+  script: string;
+  at: string;
+  checks: { passes?: number; fails?: number };
+  metrics: {
+    http_reqs?: number;
+    http_req_failed_rate?: number;
+    p95?: number;
+    p99?: number;
+    avg?: number;
+  };
+  duration?: number;
+  vus?: number;
+}
+
 interface InfraData {
   postgres: {
     ok: boolean;
@@ -37,6 +52,12 @@ interface InfraData {
   };
   failureStreaks: Array<{ provider: string; count: number }>;
   workerLeader: { hostname: string | null; ttlSec: number };
+  k6: {
+    scripts: Array<{ name: string; description: string }>;
+    lastRuns: K6Run[];
+    latest: K6Run | null;
+  };
+  serverTime: string;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -309,19 +330,89 @@ function FailureStreaksCard({ d }: { d: InfraData["failureStreaks"] }) {
   );
 }
 
+// ─── K6 Card ──────────────────────────────────────────────────────────────────
+function K6Card({ d }: { d: InfraData["k6"] }) {
+  const scriptsCount = d.scripts.length;
+  const ranCount = d.lastRuns.length;
+  const latest = d.latest;
+
+  const fmtAgo = (iso: string) => {
+    const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (diff < 60) return `${Math.floor(diff)}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
+  };
+
+  return (
+    <CardShell accent="cyan">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">🧪</span>
+          <span className="font-bold text-white">Load Tests</span>
+        </div>
+        <span
+          className={`h-2 w-2 rounded-full ${
+            ranCount > 0 ? "bg-cyan-400" : "bg-gray-600"
+          }`}
+        />
+      </div>
+
+      <div className="text-3xl font-bold text-cyan-300">
+        {ranCount}
+        <span className="text-sm text-gray-500 font-normal">/{scriptsCount}</span>
+      </div>
+      <div className="text-[10px] text-gray-500">scripts run / available</div>
+
+      {latest ? (
+        <div className="mt-2 text-xs space-y-0.5">
+          <div className="text-gray-300 font-medium">
+            <span className="text-cyan-400">{latest.script}</span>
+            <span className="text-gray-600"> · {fmtAgo(latest.at)}</span>
+          </div>
+          {latest.metrics.p95 !== undefined && (
+            <div className="text-gray-500">
+              p95 <span className="text-gray-300">{Math.round(latest.metrics.p95)}ms</span>
+              {latest.metrics.http_reqs !== undefined && (
+                <>
+                  {" · "}
+                  <span className="text-gray-300">{latest.metrics.http_reqs}</span> req
+                </>
+              )}
+            </div>
+          )}
+          {(latest.checks.passes !== undefined || latest.checks.fails !== undefined) && (
+            <div className="text-gray-500">
+              ✓ <span className="text-emerald-400">{latest.checks.passes ?? 0}</span>{" "}
+              ✗ <span className="text-rose-400">{latest.checks.fails ?? 0}</span>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="mt-2 text-[10px] text-gray-600">
+          รัน <code className="text-cyan-400">npm run loadtest:smoke</code> เพื่อเริ่ม
+        </div>
+      )}
+    </CardShell>
+  );
+}
+
 // ─── Main Panel ───────────────────────────────────────────────────────────────
 
 export function InfraPanel() {
   const [data, setData] = useState<InfraData | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastFetch, setLastFetch] = useState<Date | null>(null);
+  const [fetchFlash, setFetchFlash] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await fetch("/api/infra");
+      const res = await fetch("/api/infra", { cache: "no-store" });
       if (res.ok) {
         setData(await res.json());
         setLastFetch(new Date());
+        setFetchFlash(true);
+        setTimeout(() => setFetchFlash(false), 300);
       }
     } catch {
       // silent
@@ -332,7 +423,7 @@ export function InfraPanel() {
 
   useEffect(() => {
     fetchData();
-    const t = setInterval(fetchData, 5_000);
+    const t = setInterval(fetchData, 2_000); // realtime-ish: poll every 2s
     return () => clearInterval(t);
   }, [fetchData]);
 
@@ -370,26 +461,40 @@ export function InfraPanel() {
 
   return (
     <div className="space-y-4">
-      {/* Health badge + last fetch */}
+      {/* Header row: LIVE indicator + health badge + last fetch */}
       <div className="flex items-center gap-3 flex-wrap">
+        {/* LIVE pulsing indicator */}
+        <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-rose-500/15 border border-rose-500/40 text-[10px] font-bold tracking-wider text-rose-300 uppercase">
+          <span className="relative flex h-2 w-2">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75" />
+            <span
+              className={`relative inline-flex h-2 w-2 rounded-full transition-all ${
+                fetchFlash ? "bg-emerald-400 scale-150" : "bg-rose-500"
+              }`}
+            />
+          </span>
+          LIVE · 2s poll
+        </span>
+
         <span
           className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-sm font-semibold ${healthBadge.cls}`}
         >
           {healthBadge.icon} {healthBadge.label}
         </span>
         {lastFetch && (
-          <span className="text-xs text-gray-600">
+          <span className="text-xs text-gray-600 tabular-nums">
             อัปเดต {lastFetch.toLocaleTimeString("th-TH")}
           </span>
         )}
       </div>
 
-      {/* Row 1: Four cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {/* Row 1: Five cards */}
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
         <PostgresCard d={data.postgres} />
         <RedisCard d={data.redis} />
         <ReplicasCard d={data.replicas} leader={data.workerLeader.hostname} />
         <RateLimitCard d={data.rateLimit} />
+        <K6Card d={data.k6} />
       </div>
 
       {/* Row 2: Two wider cards */}

@@ -1,5 +1,6 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
+import { reportTo } from './_report.js';
 
 export const options = {
   vus: 1,
@@ -24,3 +25,5 @@ export default function () {
 
   sleep(1);
 }
+
+export const handleSummary = reportTo(BASE_URL, 'smoke');

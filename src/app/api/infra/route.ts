@@ -220,6 +220,43 @@ export async function GET() {
     // silent
   }
 
+  // ── k6 load-test runs ─────────────────────────────────────────────────────────
+  // Scripts are static files in loadtest/; last-run summaries live in Redis
+  // (each script POSTs to /api/k6-report at the end via k6's handleSummary hook).
+  const k6Scripts = [
+    { name: "smoke",     description: "sanity check (1 VU, 10s)" },
+    { name: "dashboard", description: "ramp to 50 VUs hitting dashboard endpoints" },
+    { name: "chat",      description: "ramp to 30 VUs on /v1/chat/completions" },
+    { name: "ratelimit", description: "150 iter, verifies 429 rate limiter" },
+    { name: "stress",    description: "ramp to 500 VUs — find the breaking point" },
+  ];
+  type K6Run = {
+    script: string;
+    at: string;
+    checks: { passes?: number; fails?: number };
+    metrics: Record<string, number | undefined>;
+    duration?: number;
+    vus?: number;
+  };
+  let k6LastRuns: K6Run[] = [];
+  let k6Latest: K6Run | null = null;
+  try {
+    const keys = await safeKeys("k6:last:*");
+    if (keys.length > 0) {
+      const r = getRedis();
+      const values = await r.mget(...keys);
+      k6LastRuns = values
+        .filter((v): v is string => v !== null)
+        .map(v => { try { return JSON.parse(v) as K6Run; } catch { return null; } })
+        .filter((x): x is K6Run => x !== null)
+        .sort((a, b) => (b.at > a.at ? 1 : -1));
+    }
+    const latestRaw = await getRedis().get("k6:latest");
+    if (latestRaw) { try { k6Latest = JSON.parse(latestRaw) as K6Run; } catch { /* silent */ } }
+  } catch {
+    // silent
+  }
+
   const result = {
     postgres,
     redis,
@@ -228,6 +265,12 @@ export async function GET() {
     cooldowns,
     failureStreaks,
     workerLeader,
+    k6: {
+      scripts: k6Scripts,
+      lastRuns: k6LastRuns,
+      latest: k6Latest,
+    },
+    serverTime: new Date().toISOString(),
   };
 
   _memo = { data: result, ts: Date.now() };
