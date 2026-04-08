@@ -331,7 +331,20 @@ async function getAvailableModels(caps: RequestCapabilities, benchmarkCategory?:
   // Apply Ollama slowness penalty: push Ollama to end if any cloud provider is available
   const cloudRows = rows.filter(r => r.provider !== "ollama");
   const ollamaRows = rows.filter(r => r.provider === "ollama");
-  const reorderedRows = cloudRows.length > 0 ? [...cloudRows, ...ollamaRows] : rows;
+  let reorderedRows = cloudRows.length > 0 ? [...cloudRows, ...ollamaRows] : rows;
+
+  // Improvement D: fast-stream provider boost — subtract 500ms from effective latency for sorting
+  const FAST_STREAM_PROVIDERS = new Set(["groq", "cerebras", "together"]);
+  if (reorderedRows.length > 1) {
+    reorderedRows = [...reorderedRows].sort((a, b) => {
+      const adjA = (a.avg_latency ?? 9999999) - (FAST_STREAM_PROVIDERS.has(a.provider) ? 500 : 0);
+      const adjB = (b.avg_latency ?? 9999999) - (FAST_STREAM_PROVIDERS.has(b.provider) ? 500 : 0);
+      // Keep Ollama at end regardless
+      if (a.provider === "ollama" && b.provider !== "ollama") return 1;
+      if (b.provider === "ollama" && a.provider !== "ollama") return -1;
+      return adjA - adjB;
+    });
+  }
 
   if (process.env.LOG_LEVEL === "debug") {
     const providerCount: Record<string, number> = {};
