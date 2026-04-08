@@ -2,6 +2,7 @@ import { getSqlClient } from "@/lib/db/schema";
 import { scanModels } from "./scanner";
 import { checkHealth } from "./health";
 import { runBenchmarks } from "./benchmark";
+import { acquireLeader, renewLeader, releaseLeader } from "./leader";
 
 export { scanModels } from "./scanner";
 export { checkHealth } from "./health";
@@ -77,6 +78,14 @@ export async function runWorkerCycle(): Promise<void> {
     return;
   }
 
+  // Leader election — only one replica runs the cycle when scaled horizontally.
+  // Falls through to "true" if Redis is unreachable (single-replica dev setup).
+  const isLeader = await acquireLeader();
+  if (!isLeader) {
+    await logWorker("worker", "Cycle skipped — another replica holds the leader lock", "info");
+    return;
+  }
+
   isRunning = true;
   await setState("status", "running");
   await setState("last_run", new Date().toISOString());
@@ -101,6 +110,9 @@ export async function runWorkerCycle(): Promise<void> {
     await logWorker("worker", `Step 1 (scan) failed: ${err}`, "error");
   }
 
+  // Extend leader lock before the potentially long health check
+  await renewLeader();
+
   try {
     // Step 2: Health check
     await logWorker("worker", "Step 2: Health check");
@@ -122,6 +134,9 @@ export async function runWorkerCycle(): Promise<void> {
     "worker",
     `Cycle complete — scan:${scanResult.found}/${scanResult.new} health:${healthResult.available}/${healthResult.checked} benchmark:${benchmarkResult.tested}/${benchmarkResult.questions}`
   );
+
+  // Release leader lock at end of cycle so it naturally rotates between replicas
+  await releaseLeader();
 
   isRunning = false;
 }

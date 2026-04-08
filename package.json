@@ -16,7 +16,8 @@
     "loadtest:dashboard": "k6 run loadtest/dashboard.js",
     "loadtest:chat": "k6 run loadtest/chat.js",
     "loadtest:ratelimit": "k6 run loadtest/ratelimit.js",
-    "loadtest:stress": "k6 run loadtest/stress.js"
+    "loadtest:stress": "k6 run loadtest/stress.js",
+    "autoscale": "node scripts/autoscale.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.49",
