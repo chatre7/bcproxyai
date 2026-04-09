@@ -1084,9 +1084,19 @@ export async function POST(req: NextRequest) {
         // Parse and return the hedge winner response
         try {
           const cloned = hedgeResp.clone();
-          const json = await cloned.json() as { choices?: Array<{ message?: { content?: string; tool_calls?: unknown[] } }>; usage?: { prompt_tokens?: number; completion_tokens?: number } };
-          let content = json.choices?.[0]?.message?.content ?? "";
-          const hasToolCalls = Array.isArray(json.choices?.[0]?.message?.tool_calls) && (json.choices[0].message!.tool_calls!.length > 0);
+          const json = await cloned.json() as { choices?: Array<{ message?: { content?: string; reasoning?: string; reasoning_content?: string; tool_calls?: unknown[] } }>; usage?: { prompt_tokens?: number; completion_tokens?: number } };
+          const firstMsg = json.choices?.[0]?.message;
+          let content = firstMsg?.content ?? "";
+          // Same reasoning→content fallback as the sequential path
+          if (!content && firstMsg) {
+            const fallback = firstMsg.reasoning || firstMsg.reasoning_content;
+            if (fallback) {
+              content = fallback;
+              firstMsg.content = fallback;
+              console.log(`[HEDGE-REASONING-FALLBACK] ${winner.provider}/${winner.model_id} — moved ${fallback.length} chars`);
+            }
+          }
+          const hasToolCalls = Array.isArray(firstMsg?.tool_calls) && (firstMsg!.tool_calls!.length > 0);
           const badReason = isResponseBad(content, caps.hasTools, hasToolCalls);
           if (badReason) {
             console.log(`[HEDGE-BAD] ${winner.provider}/${winner.model_id} — ${badReason}`);
@@ -1187,9 +1197,24 @@ export async function POST(req: NextRequest) {
           if (!isStream) {
             try {
               const cloned = response.clone();
-              const json = await cloned.json() as { choices?: Array<{ message?: { content?: string; tool_calls?: unknown[] } }>; usage?: { prompt_tokens?: number; completion_tokens?: number } };
-              let content = json.choices?.[0]?.message?.content ?? "";
-              const hasToolCalls = Array.isArray(json.choices?.[0]?.message?.tool_calls) && (json.choices[0].message!.tool_calls!.length > 0);
+              const json = await cloned.json() as { choices?: Array<{ message?: { content?: string; reasoning?: string; reasoning_content?: string; tool_calls?: unknown[] } }>; usage?: { prompt_tokens?: number; completion_tokens?: number } };
+              const firstMsg = json.choices?.[0]?.message;
+              let content = firstMsg?.content ?? "";
+
+              // Some providers (Mistral Large, Ollama qwen, DeepSeek) put the
+              // actual answer in `reasoning` or `reasoning_content` instead of
+              // `content`. Fall back so downstream clients (n้องกุ้ง/OpenClaw)
+              // see a non-empty response.
+              if (!content && firstMsg) {
+                const fallback = firstMsg.reasoning || firstMsg.reasoning_content;
+                if (fallback) {
+                  content = fallback;
+                  firstMsg.content = fallback;
+                  console.log(`[REASONING-FALLBACK] ${provider}/${actualModelId} — moved ${fallback.length} chars from reasoning→content`);
+                }
+              }
+
+              const hasToolCalls = Array.isArray(firstMsg?.tool_calls) && (firstMsg!.tool_calls!.length > 0);
 
               const badReason = isResponseBad(content, caps.hasTools, hasToolCalls);
               if (badReason) {
