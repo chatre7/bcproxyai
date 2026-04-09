@@ -17,6 +17,7 @@ import { recordOutcome, getProviderScore, getModelScore, isRecentlyDead } from "
 import { isProviderEnabledSync } from "@/lib/provider-toggle";
 import { canFitRequest, parseLimitHeaders, parseLimitError, recordLimit } from "@/lib/provider-limits";
 import { recordOutcomeLearning, recordFailStreak, canHandleTokens, getCategoryWinners, detectCategory, isModelUnhealthyForCategory } from "@/lib/learning";
+import { upstreamAgent } from "@/lib/upstream-agent";
 
 // Slow threshold แปรผันตาม context size — request ใหญ่ช้ากว่าปกติ
 function slowThresholdMs(estInputTokens: number): number {
@@ -679,30 +680,34 @@ async function forwardToProvider(
     requestBody.options = { ...(requestBody.options as Record<string, unknown> ?? {}), num_ctx: 65536 };
   }
 
-  // Per-attempt timeout — scaled by estimated body size
-  // Small: 8s, Medium (5K+): 15s, Large (10K+): 25s, Ollama: 30s
+  // Per-attempt timeout — non-stream only
+  // Streaming requests MUST NOT have a hard timeout — they're bound by
+  // TOTAL_TIMEOUT_MS in the caller, and the client controls abort via externalSignal
   const bodySize = JSON.stringify(body).length;
-  let timeoutMs: number;
-  if (provider === "ollama") {
-    timeoutMs = 30_000;
-  } else if (bodySize > 40_000) {
-    timeoutMs = 30_000; // 10K+ tokens
-  } else if (bodySize > 20_000) {
-    timeoutMs = 20_000; // 5K+ tokens
-  } else if (bodySize > 10_000) {
-    timeoutMs = 12_000;
-  } else {
-    timeoutMs = 8_000;
+  let signal: AbortSignal | undefined = externalSignal;
+  if (!stream) {
+    let timeoutMs: number;
+    if (provider === "ollama") {
+      timeoutMs = 30_000;
+    } else if (bodySize > 40_000) {
+      timeoutMs = 60_000;
+    } else if (bodySize > 20_000) {
+      timeoutMs = 35_000;
+    } else if (bodySize > 10_000) {
+      timeoutMs = 20_000;
+    } else {
+      timeoutMs = 12_000;
+    }
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    signal = externalSignal ? AbortSignal.any([timeoutSignal, externalSignal]) : timeoutSignal;
   }
-  const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  const signal = externalSignal
-    ? AbortSignal.any([timeoutSignal, externalSignal])
-    : timeoutSignal;
   const response = await fetch(url, {
     method: "POST",
     headers,
     body: JSON.stringify(requestBody),
     signal,
+    // @ts-expect-error undici dispatcher not in standard fetch types
+    dispatcher: upstreamAgent,
   });
 
   if (response.status === 429) {

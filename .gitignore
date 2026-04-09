@@ -59,3 +59,12 @@ loadtest/summary.html
 # performance reports
 perf-report.md
 .claude/
+
+# Generated code sandbox — AI-authored runtime artifacts
+generated/scripts/*.ts
+generated/scripts/*.js
+generated/scripts/*.py
+generated/queries/*.sql
+generated/reports/*
+generated/patches/*
+!generated/README.md

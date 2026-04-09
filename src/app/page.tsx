@@ -52,6 +52,7 @@ import { SemanticCachePanel } from "../components/SemanticCachePanel";
 import { WarmupPanel } from "../components/WarmupPanel";
 import { TeachersPanel } from "../components/TeachersPanel";
 import { CodegenPanel } from "../components/CodegenPanel";
+import { DevSuggestionsPanel } from "../components/DevSuggestionsPanel";
 
 // ─── Gateway Config Card ───────────────────────────────────────────────────────
 
@@ -371,7 +372,7 @@ export default function Dashboard() {
 
       {/* ── Sticky Nav ─────────────────────────────────────────────────────── */}
       <nav className="sticky top-0 z-50 border-b border-white/5 glass">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6">
+        <div className="w-full px-2 sm:px-3">
           {/* Row 1: Logo + actions */}
           <div className="flex h-12 items-center justify-between">
             <div className="flex items-center gap-3">
@@ -421,6 +422,9 @@ export default function Dashboard() {
           {/* Row 2: Nav links — wrappable */}
           <div className="flex flex-wrap gap-1 pb-2">
             {[
+              { id: "gateway-logs",  icon: "\u{1F4DD}", label: "สมุดจดงาน" },
+              { id: "codegen",       icon: "\u{1F4BE}", label: "โค้ดระบบ" },
+              { id: "dev-suggestions", icon: "\u{1F4A1}", label: "คำแนะนำ Dev" },
               { id: "infra",         icon: "\u{1F3D7}", label: "โครงสร้าง" },
               { id: "status",        icon: "\u{1F3EB}", label: "ครูใหญ่" },
               { id: "teachers",      icon: "\u{1F3EB}", label: "คณะครู" },
@@ -439,7 +443,6 @@ export default function Dashboard() {
               { id: "cost-opt",      icon: "\u{1F4B0}", label: "ค่าเทอม" },
               { id: "school-bell",   icon: "\u{1F514}", label: "ระฆัง" },
               { id: "complaints",    icon: "\u26A0\uFE0F",  label: "ร้องเรียน" },
-              { id: "gateway-logs",  icon: "\u{1F4DD}", label: "จดงาน" },
               { id: "logs",          icon: "\u{1F4D3}", label: "บันทึกครู" },
             ].map((link) => (
               <a
@@ -539,6 +542,11 @@ export default function Dashboard() {
         {/* ── Code Generation Log (moved to top — after gateway logs) ──── */}
         <section id="codegen" className="animate-fade-in-up stagger-0">
           <CodegenPanel />
+        </section>
+
+        {/* ── Dev Suggestions (things AI can't fix — human dev needs to) ── */}
+        <section id="dev-suggestions" className="animate-fade-in-up stagger-0">
+          <DevSuggestionsPanel />
         </section>
 
         {/* ── Infrastructure Monitoring ────────────────────────────────── */}

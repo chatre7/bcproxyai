@@ -376,6 +376,26 @@ export async function runMigrations(): Promise<void> {
     `;
     await sql`CREATE INDEX IF NOT EXISTS idx_codegen_recent ON codegen_log(created_at DESC)`;
 
+    // Dev suggestions — ระบบพบปัญหาที่ต้องให้ Dev แก้ core (AI ห้ามแตะ src/)
+    await sql`
+      CREATE TABLE IF NOT EXISTS dev_suggestions (
+        id BIGSERIAL PRIMARY KEY,
+        severity TEXT NOT NULL CHECK (severity IN ('info', 'warn', 'high', 'critical')),
+        category TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        target_files TEXT,
+        proposed_change TEXT,
+        evidence TEXT,
+        status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'acknowledged', 'resolved', 'dismissed')),
+        source TEXT,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now()
+      )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS idx_dev_sugg_open ON dev_suggestions(status, severity, created_at DESC) WHERE status = 'open'`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_dev_sugg_recent ON dev_suggestions(created_at DESC)`;
+
     console.log("[migrate] All tables created/verified");
   } catch (err) {
     console.error("[migrate] Migration failed:", err);
