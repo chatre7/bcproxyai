@@ -47,6 +47,9 @@ import { InfraPanel } from "../components/InfraPanel";
 import { UptimePanel } from "../components/UptimePanel";
 import { CostOptimizerPanel } from "../components/CostOptimizerPanel";
 import { SchoolBellPanel } from "../components/SchoolBellPanel";
+import { ProviderLimitsPanel } from "../components/ProviderLimitsPanel";
+import { SemanticCachePanel } from "../components/SemanticCachePanel";
+import { WarmupPanel } from "../components/WarmupPanel";
 
 // ─── Gateway Config Card ───────────────────────────────────────────────────────
 
@@ -418,6 +421,9 @@ export default function Dashboard() {
             {[
               { id: "infra",         icon: "\u{1F3D7}", label: "โครงสร้าง" },
               { id: "status",        icon: "\u{1F3EB}", label: "ครูใหญ่" },
+              { id: "limits",        icon: "\u{1F4CA}", label: "โควต้า" },
+              { id: "cache",         icon: "\u{1F9E0}", label: "แคช" },
+              { id: "warmup",        icon: "\u{1F525}", label: "อุ่นเครื่อง" },
               { id: "providers",     icon: "\u{1F50C}", label: "ผู้ให้บริการ" },
               { id: "rankings",      icon: "\u{1F3C6}", label: "ผลงาน" },
               { id: "speed-race",    icon: "\u{1F3C1}", label: "วิ่งแข่ง" },
@@ -620,6 +626,21 @@ export default function Dashboard() {
 
           {/* Stats Cards */}
           <StatsCards stats={stats} loading={loading} />
+        </section>
+
+        {/* ── Provider Limits (TPM/TPD) ──────────────────────────────── */}
+        <section id="limits" className="animate-fade-in-up stagger-1">
+          <ProviderLimitsPanel />
+        </section>
+
+        {/* ── Semantic Cache Stats ───────────────────────────────────── */}
+        <section id="cache" className="animate-fade-in-up stagger-1">
+          <SemanticCachePanel />
+        </section>
+
+        {/* ── Warmup Worker Stats ────────────────────────────────────── */}
+        <section id="warmup" className="animate-fade-in-up stagger-1">
+          <WarmupPanel />
         </section>
 
         {/* ── Provider Status — ทุก provider ──────────────────────────── */}
