@@ -264,16 +264,23 @@ function estimateTokens(body: Record<string, unknown>): number {
 
 const VISION_PRIORITY_PROVIDERS = ["google", "groq", "ollama", "github"];
 
+// P2: OpenRouter free-tier models that claim supports_tools=1 in DB but 404 at runtime
+const KNOWN_BROKEN_TOOL_MODELS = new Set([
+  "openrouter:google/gemma-3n-e2b-it:free",
+  "openrouter:google/gemma-3n-e4b-it:free",
+]);
+
 async function getAvailableModels(caps: RequestCapabilities, benchmarkCategory?: string): Promise<ModelRow[]> {
   const sql = getSqlClient();
 
   const visionFilter = caps.hasImages ? `AND m.supports_vision = 1` : "";
+  const toolsFilter = caps.hasTools ? `AND m.supports_tools = 1` : "";
   const visionBoost = caps.hasImages
     ? `, CASE WHEN m.provider IN ('google','groq','ollama','github') THEN 0 ELSE 1 END as vision_priority`
     : "";
   const visionOrder = caps.hasImages ? "vision_priority ASC," : "";
   const toolsBoost = caps.hasTools
-    ? "CASE WHEN m.supports_tools = 1 THEN 0 ELSE 1 END ASC, CASE WHEN m.context_length >= 128000 THEN 0 WHEN m.context_length >= 32000 THEN 1 ELSE 2 END ASC,"
+    ? "CASE WHEN m.context_length >= 128000 THEN 0 WHEN m.context_length >= 32000 THEN 1 ELSE 2 END ASC,"
     : "";
 
   // Use raw SQL for this complex query — includes real production latency from routing_stats
@@ -321,6 +328,7 @@ async function getAvailableModels(caps: RequestCapabilities, benchmarkCategory?:
       AND COALESCE(m.supports_audio_output, 0) != 1
       AND COALESCE(m.supports_image_gen, 0) != 1
       ${visionFilter}
+      ${toolsFilter}
     ORDER BY ${toolsBoost} ${visionOrder}
       ${caps.needsJsonSchema ? "CASE WHEN m.tier = 'large' THEN 0 ELSE 1 END ASC," : ""}
       CASE WHEN ${benchmarkCategory ? "COALESCE(bcat.avg_score, ball.avg_score_all, 0)" : "COALESCE(ball.avg_score_all, 0)"} > 0 THEN 0 ELSE 1 END ASC,
@@ -1181,6 +1189,13 @@ export async function POST(req: NextRequest) {
             continue;
           }
         }
+      }
+
+      // P2: Skip known-broken tool models
+      const candidateKey = `${provider}:${actualModelId}`;
+      if (caps.hasTools && KNOWN_BROKEN_TOOL_MODELS.has(candidateKey)) {
+        console.log(`[BROKEN-TOOL-SKIP] ${candidateKey} — known broken tool support`);
+        continue;
       }
 
       // Check if this attempt is a half-open probe
