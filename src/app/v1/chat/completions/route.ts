@@ -16,7 +16,7 @@ import { hasTpmHeadroom, recordTokenConsumption } from "@/lib/tpm-tracker";
 import { recordOutcome, getProviderScore, getModelScore, isRecentlyDead } from "@/lib/live-score";
 import { isProviderEnabledSync } from "@/lib/provider-toggle";
 import { canFitRequest, parseLimitHeaders, parseLimitError, recordLimit } from "@/lib/provider-limits";
-import { recordOutcomeLearning, recordFailStreak, canHandleTokens, getCategoryWinners, detectCategory } from "@/lib/learning";
+import { recordOutcomeLearning, recordFailStreak, canHandleTokens, getCategoryWinners, detectCategory, isModelUnhealthyForCategory } from "@/lib/learning";
 
 // Slow threshold แปรผันตาม context size — request ใหญ่ช้ากว่าปกติ
 function slowThresholdMs(estInputTokens: number): number {
@@ -255,10 +255,10 @@ function estimateTokens(body: Record<string, unknown>): number {
 const VISION_PRIORITY_PROVIDERS = ["google", "groq", "ollama", "github"];
 
 // P2: OpenRouter free-tier models that claim supports_tools=1 in DB but 404 at runtime
-const KNOWN_BROKEN_TOOL_MODELS = new Set([
-  "openrouter:google/gemma-3n-e2b-it:free",
-  "openrouter:google/gemma-3n-e4b-it:free",
-]);
+// NOTE: No hardcoded broken tool models.
+// System learns from production signals: model_samples (fail count per category=tools),
+// category_winners (tools category loss_streak), and exam_answers (tools question pass rate).
+// See `recordOutcomeLearning()` and `getCategoryWinners("tools")`.
 
 async function getAvailableModels(caps: RequestCapabilities, benchmarkCategory?: string, estTokens?: number): Promise<ModelRow[]> {
   const sql = getSqlClient();
@@ -1320,13 +1320,16 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // P2: Skip known-broken tool models
-      const candidateKey = `${provider}:${actualModelId}`;
-      if (caps.hasTools && KNOWN_BROKEN_TOOL_MODELS.has(candidateKey)) {
-        skippedCandidates.push(candidate);
-        skipReasons.push(`${provider}/${actualModelId}:known-broken-tools`);
-        console.log(`[BROKEN-TOOL-SKIP] ${candidateKey} — known broken tool support`);
-        continue;
+      // P2: Skip model if it has a learned loss_streak in this request's category
+      // (self-learned from production signals — no hardcoded list)
+      if (caps.hasTools || caps.hasImages) {
+        const unhealthyCheck = await isModelUnhealthyForCategory(dbModelId, learningCategory);
+        if (unhealthyCheck.unhealthy) {
+          skippedCandidates.push(candidate);
+          skipReasons.push(`${provider}/${actualModelId}:unhealthy-${learningCategory}`);
+          console.log(`[UNHEALTHY-SKIP:${_reqId}] ${provider}/${actualModelId} ${learningCategory} — ${unhealthyCheck.reason}`);
+          continue;
+        }
       }
 
       // P4: Skip if provider TPM budget is exhausted

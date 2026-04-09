@@ -360,6 +360,22 @@ export async function runMigrations(): Promise<void> {
     await sql`CREATE INDEX IF NOT EXISTS idx_grading_attempt ON grading_history(attempt_id)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_grading_grader ON grading_history(grader_model_id, graded_at DESC)`;
 
+    // Code generation log — ระบบเขียน code/script อะไรให้ใครรันบ้าง (self-introspection)
+    await sql`
+      CREATE TABLE IF NOT EXISTS codegen_log (
+        id BIGSERIAL PRIMARY KEY,
+        filename TEXT NOT NULL,
+        purpose TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        size_bytes INT DEFAULT 0,
+        lines INT DEFAULT 0,
+        source TEXT,
+        outcome TEXT,
+        created_at TIMESTAMPTZ DEFAULT now()
+      )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS idx_codegen_recent ON codegen_log(created_at DESC)`;
+
     console.log("[migrate] All tables created/verified");
   } catch (err) {
     console.error("[migrate] Migration failed:", err);

@@ -250,6 +250,41 @@ export async function getCategoryWinners(category: string, limit = 5): Promise<s
   }
 }
 
+/**
+ * ตรวจว่า model มี loss_streak สูง ใน category นี้หรือไม่
+ * ใช้แทน hardcoded broken-tool list — ระบบเรียนรู้จาก production
+ *
+ * Rules:
+ *   - loss_streak >= 3 AND wins/(wins+losses) < 0.3 → unhealthy, skip
+ *   - ไม่มีข้อมูล → ถือว่า OK (optimistic)
+ */
+export async function isModelUnhealthyForCategory(
+  modelId: string,
+  category: string
+): Promise<{ unhealthy: boolean; reason?: string }> {
+  try {
+    const sql = getSqlClient();
+    const rows = await sql<{ wins: number; losses: number; loss_streak: number }[]>`
+      SELECT wins, losses, loss_streak
+      FROM category_winners
+      WHERE model_id = ${modelId} AND category = ${category}
+    `;
+    if (rows.length === 0) return { unhealthy: false };
+    const row = rows[0];
+    const total = row.wins + row.losses;
+    const successRate = total > 0 ? row.wins / total : 1;
+    if (row.loss_streak >= 3 && successRate < 0.3) {
+      return {
+        unhealthy: true,
+        reason: `streak=${row.loss_streak} successRate=${(successRate * 100).toFixed(0)}%`,
+      };
+    }
+    return { unhealthy: false };
+  } catch {
+    return { unhealthy: false };
+  }
+}
+
 // ─── Category Detection ───────────────────────────────────────────────────────
 
 /**
