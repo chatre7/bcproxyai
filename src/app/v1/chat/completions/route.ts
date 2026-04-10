@@ -1036,11 +1036,9 @@ export async function POST(req: NextRequest) {
       finalCandidates = await selectModelsByMode(parsed.mode, caps, benchmarkCategory, estInputTokens);
     }
     if (finalCandidates.length === 0) {
-      finalCandidates = await getAllModelsIncludingCooldown(caps);
-    }
-    if (finalCandidates.length === 0) {
-      const reason = "ไม่มี model ในระบบ — รอ worker scan";
+      const reason = "ไม่มี model ที่ผ่านสอบ — รอ worker exam cycle";
       await logGateway(modelField, null, null, 503, Date.now() - _reqTime, 0, 0, reason, extractUserMessage(body), null);
+      console.log(`[RES:${_reqId}] 503 | no passed models | ${reason}`);
       return openAIError(503, { message: reason });
     }
 
