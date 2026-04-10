@@ -248,8 +248,26 @@ function detectRequestCapabilities(body: Record<string, unknown>): RequestCapabi
 }
 
 function estimateTokens(body: Record<string, unknown>): number {
-  const str = JSON.stringify(body.messages ?? []);
-  return Math.ceil(str.length / 3);
+  // นับเฉพาะ text — ไม่นับ image base64 (แต่ละรูป ~1K tokens คงที่)
+  let textLen = 0;
+  let imageCount = 0;
+  const msgs = body.messages;
+  if (Array.isArray(msgs)) {
+    for (const msg of msgs as Array<{ content?: unknown }>) {
+      if (typeof msg.content === "string") {
+        textLen += msg.content.length;
+      } else if (Array.isArray(msg.content)) {
+        for (const part of msg.content as Array<{ type?: string; text?: string; image_url?: unknown }>) {
+          if (part.type === "text" && part.text) textLen += part.text.length;
+          else if (part.type === "image_url") imageCount++;
+        }
+      }
+    }
+  }
+  // tools/other fields
+  const toolsStr = body.tools ? JSON.stringify(body.tools) : "";
+  textLen += toolsStr.length;
+  return Math.ceil(textLen / 3) + imageCount * 1000;
 }
 
 const VISION_PRIORITY_PROVIDERS = ["google", "groq", "ollama", "github"];

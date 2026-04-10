@@ -514,7 +514,7 @@ export default function Dashboard() {
                           <td className="px-2 py-1 text-indigo-300 font-mono">{log.requestModel}</td>
                           <td className="px-2 py-1 text-gray-200 font-mono truncate max-w-[260px]">{log.resolvedModel ?? "—"}</td>
                           <td className="px-2 py-1">
-                            {log.provider && <ProviderBadge provider={log.provider} />}
+                            {log.provider ? <ProviderBadge provider={log.provider} /> : <span className="text-gray-600">—</span>}
                           </td>
                           <td className="px-2 py-1 text-right text-gray-300 font-mono">{fmtMs(log.latencyMs)}</td>
                           <td className="px-2 py-1 text-gray-300 truncate max-w-[480px]">
