@@ -95,7 +95,7 @@ export function ChatPanel({ availableModels }: { availableModels: ModelData[] })
   const provColor = PROVIDER_COLORS[selectedModel?.provider ?? ""] ?? { text: "text-gray-300" };
 
   return (
-    <div className="flex flex-col h-[600px] glass rounded-2xl overflow-hidden border border-indigo-500/20">
+    <div className="flex flex-col glass rounded-2xl border border-indigo-500/20">
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-white/5 bg-gray-900/50">
         <div className="flex-1">
@@ -127,7 +127,7 @@ export function ChatPanel({ availableModels }: { availableModels: ModelData[] })
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+      <div className="p-4 space-y-3">
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center gap-3">
             <div className="h-16 w-16 rounded-full bg-indigo-500/10 flex items-center justify-center animate-float">

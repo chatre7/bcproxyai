@@ -113,7 +113,7 @@ export function SemanticCachePanel() {
               <div className="text-[11px] text-gray-500 mb-2 uppercase tracking-wide">
                 Top entries (by hits)
               </div>
-              <div className="space-y-1.5 max-h-[300px] overflow-y-auto pr-2">
+              <div className="space-y-1.5">
                 {stats.topEntries.map((e) => (
                   <div
                     key={e.id}

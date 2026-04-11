@@ -135,7 +135,7 @@ export function UptimePanel() {
           <h4 className="text-white font-medium text-sm">เหตุการณ์ — ใครมาสาย ใครขาดเรียน (24 ชม.)</h4>
           <span className="text-xs text-gray-500">{incidents.length} รายการ</span>
         </div>
-        <div className="divide-y divide-gray-700/30 max-h-[300px] overflow-y-auto">
+        <div className="divide-y divide-gray-700/30">
           {incidents.length === 0 ? (
             <div className="text-center text-gray-500 py-6 text-sm">ไม่มีใครขาดเรียน — เด็กดีทุกคน! 🟢</div>
           ) : (

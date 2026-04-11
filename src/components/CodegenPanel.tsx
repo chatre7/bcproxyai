@@ -101,7 +101,7 @@ export function CodegenPanel() {
           </div>
         </div>
       ) : (
-        <div className="space-y-0.5 max-h-[500px] overflow-y-auto pr-2 font-mono text-base">
+        <div className="space-y-0.5 font-mono text-base">
           {data.entries.map((e) => {
             const meta = KIND_META[e.kind] ?? KIND_META.other;
             return (

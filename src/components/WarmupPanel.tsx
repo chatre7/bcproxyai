@@ -113,7 +113,7 @@ export function WarmupPanel() {
               ยังไม่มีประวัติ warmup — worker จะเริ่มทำงานหลัง deploy 30 วินาที
             </div>
           ) : (
-            <div className="space-y-1 max-h-[260px] overflow-y-auto pr-2 font-mono text-[11px]">
+            <div className="space-y-1 font-mono text-[11px]">
               {stats.recentLogs.map((log, i) => {
                 const time = new Date(log.createdAt).toLocaleTimeString("th-TH", {
                   hour12: false,

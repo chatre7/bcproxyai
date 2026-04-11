@@ -267,7 +267,7 @@ export function TeachersPanel() {
             ยังไม่มีประวัติการตรวจ — จะเริ่มบันทึกเมื่อ worker รอบถัดไปสอบ
           </div>
         ) : (
-          <div className="space-y-1 max-h-[320px] overflow-y-auto pr-2 font-mono text-[11px]">
+          <div className="space-y-1 font-mono text-[11px]">
             {data.recentGradings.map((g) => {
               const roleIcon =
                 g.graderRole === "principal"

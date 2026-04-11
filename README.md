@@ -1,1076 +1,288 @@
 # SMLGateway
 
-**OpenAI-compatible LLM gateway ที่รวม model ฟรี จาก 26 providers ในจุดเดียว**
-ระบบฉลาดขึ้นเองจากการใช้งาน — ไม่ต้องตั้งค่า ยิ่งใช้ยิ่งรู้จัก
+**OpenAI-compatible LLM gateway ที่รวมโมเดลฟรีจากหลาย provider ไว้จุดเดียว**
+ระบบเรียนรู้จากการใช้งานเอง — ไม่ต้อง tune ด้วยมือ ยิ่งใช้ยิ่งเลือก route ได้ดี
 
-> เหมาะกับ: Developer ที่ต้องการทดลอง AI, Startup ที่อยากลดค่า API, Production app ที่ต้องการ fallback/redundancy, Coding agent (OpenClaw, Aider, Cline)
+> ใช้ได้กับทุก client ที่รองรับ OpenAI SDK — Next.js, Python, LangChain, curl, OpenClaw, Aider, Cline ฯลฯ
 
----
-
-## 📋 สารบัญ
-
-- [✨ Highlights](#-highlights)
-- [🚀 Quick Start (5 นาที)](#-quick-start-5-นาที)
-- [📦 Provider List 26 ตัว](#-provider-list--26-ตัว)
-- [🏗 Architecture](#-architecture)
-- [🚀 Installation Guide (ละเอียด)](#-ติดตั้ง-installation-guide)
-- [🎓 Exam System](#-ระบบสอบ-exam-system)
-- [🧠 Self-Tuning Learning](#-self-tuning-learning)
-- [🎯 Smart Routing Pipeline](#-smart-routing-pipeline)
-- [🔌 API Endpoints](#-api-endpoints)
-- [🗃 Database Schema](#-database-schema)
-- [🔗 Integration Examples](#-integration-examples)
-- [🛠 Troubleshooting](#-troubleshooting)
-- [❓ FAQ](#-faq)
-- [🔧 Development](#-development)
+**Local-only** — ออกแบบให้รันบน Docker Desktop เครื่องเดียว ไม่มี auth / multi-tenant / public deploy (หลีกเลี่ยงปัญหา provider IP lock)
 
 ---
 
-## 🚀 Quick Start (5 นาที)
+## สารบัญ
 
-ต้องการทดลองเร็วสุด ใช้แค่ 2 provider ก็พอ:
+- [Quick Start](#quick-start)
+- [Architecture](#architecture)
+- [Virtual Models](#virtual-models)
+- [โรงเรียน — Exam + Teachers](#โรงเรียน--exam--teachers)
+- [Smart Routing](#smart-routing)
+- [API](#api)
+- [Integration](#integration)
+- [Port Map](#port-map)
+- [Development](#development)
+- [Troubleshooting](#troubleshooting)
+
+---
+
+## Quick Start
 
 ```bash
-# 1. Clone + install
 git clone https://github.com/jaturapornchai/sml-gateway.git
 cd sml-gateway
 cp .env.example .env.local
+# แก้ .env.local — ใส่เฉพาะ API key ของ provider ที่มี (เว้นว่างได้)
 
-# 2. แก้ .env.local ใส่ 2 keys
-# GROQ_API_KEY=gsk_xxx          ← https://console.groq.com/keys (ฟรี)
-# NVIDIA_API_KEY=nvapi-xxx      ← https://build.nvidia.com/ (ฟรี)
-
-# 3. Build + run
 docker compose up -d --build
-
-# 4. รอ 10 วินาที แล้วเปิด dashboard
-sleep 10 && open http://localhost:3334/
-
-# 5. Trigger worker scan (1 ครั้ง)
-curl -X POST http://localhost:3334/api/worker
+sleep 10 && curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3334/
+# เปิด dashboard
+start http://localhost:3334/   # Windows
+# คู่มือเชื่อมต่อ + ตัวอย่างโค้ด
+start http://localhost:3334/guide
 ```
 
-เท่านี้ก็พร้อมใช้งาน — model ที่ผ่านสอบจะพร้อมรับ request อัตโนมัติ
-
-**ทดสอบเรียกใช้:**
+ยิงทดสอบ:
 ```bash
 curl -X POST http://localhost:3334/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"sml/auto","messages":[{"role":"user","content":"สวัสดี"}]}'
 ```
 
----
-
-## ✨ Highlights
-
-- 🎓 **Exam System** — Model ทุกตัวต้องผ่านสอบก่อนได้ทำงาน (rule-based 25 ข้อ, ผ่าน ≥ 85%)
-- 🏆 **Category Winners** — เรียนรู้ว่า model ไหนเก่ง thai / code / math / tools / long-context
-- 📏 **Self-Learning Rate Limits** — อ่าน `x-ratelimit-*` + parse 429 message เรียนรู้ TPM/TPD เอง
-- 📐 **Capacity Learning** — p90 ของ token size ที่ model ทำได้จริง
-- ⏳ **Exponential Cooldown** — 10s → 20s → 40s → 80s → 2 min cap, reset อัตโนมัติ
-- ⚡ **Live Score EMA** — success rate อัพเดททุก request ไม่ต้องรอ benchmark
-- 🔄 **Adaptive Exam Retry** — สอบใหม่บ่อยตาม production performance (1h – 7 วัน)
-- 🌐 **26 Providers** — รวมทั้ง NVIDIA NIM, Chutes.ai, LLM7, Scaleway และอื่นๆ
-- 🎛 **Provider Toggle** — เปิด/ปิด provider ผ่าน UI ไม่ต้อง restart
-- 📊 **Full Observability** — Request ID trace ทั้ง chain, Thai dashboard
+Worker cycle (scan → health → exam → appoint teachers) รันเองทุก 15 นาที
+Warmup worker ping โมเดลที่ผ่านสอบทุก 2 นาที
+Trigger manual: `curl -X POST http://localhost:3334/api/worker`
 
 ---
 
-## 📦 Provider List — 26 ตัว
-
-### Tier 1 — Free ถาวร (ไม่ต้องบัตรเครดิต)
-
-| Provider | Free Limit | Models | Req/เดือน | Priority |
-|---|---|---|---:|:---:|
-| **NVIDIA NIM** | 1,000 credits (lifetime) | 168+ models (Llama, DeepSeek, Qwen, Nemotron) | 1,000 | ⭐⭐⭐⭐⭐ |
-| **Groq** | 14,400 RPD × 7 models | Llama 3.1/3.3, Qwen, Kimi, Gemma | 3,024,000 | ⭐⭐⭐⭐⭐ |
-| **Cerebras** | 1M tokens/day | Llama, Qwen, gpt-oss | 60,000 | ⭐⭐⭐⭐⭐ |
-| **Mistral** | 1 RPS + 1B tok/mo | 60+ models (Mistral/Mixtral/Codestral) | 2,592,000 | ⭐⭐⭐⭐⭐ |
-| **SambaNova** | 30 RPM × 12 models | Llama, Qwen 2.5 | 12,960,000 | ⭐⭐⭐⭐⭐ |
-| **Chutes.ai** | Unlimited (community GPU) | DeepSeek R1, Qwen3-235B, Kimi K2 | 300,000+ | ⭐⭐⭐⭐⭐ |
-| **LLM7.io** | 30 RPM (120 w/token) | DeepSeek R1, Qwen Coder, 27+ | 518,400 | ⭐⭐⭐⭐ |
-| **Ollama Cloud** | 100 req/hour | gpt-oss:120b, deepseek-v3:671b, qwen3-coder:480b | 72,000 | ⭐⭐⭐⭐ |
-| **Pollinations AI** | 1 req/hour (IP) / unlimited w/secret key | GPT-5, Claude, Gemini, DeepSeek | 30,000+ | ⭐⭐⭐⭐ |
-| **Scaleway 🇪🇺** | 1M tokens lifetime | Qwen3-235B, gpt-oss, Gemma 3 | ~400 (one-time) | ⭐⭐⭐ |
-| **Google AI (Gemini)** | 5-15 RPM / 100-1K RPD | Gemini 2.5 Pro/Flash/Flash-Lite | 48,000 | ⭐⭐⭐ |
-| **Z.AI (GLM)** | Free signup credits | GLM-4.5, GLM-4-Flash (1M context) | 20,000 | ⭐⭐⭐ |
-| **OpenRouter** | 50 RPD (1K w/$10 credit) | 30+ free models | 1,500 | ⭐⭐⭐ |
-| **GitHub Models** | 50-150 RPD per model | GPT-4o, Llama, Mistral | 6,000 | ⭐⭐⭐ |
-| **SiliconFlow 🇨🇳** | 50 RPD (1K w/$1) | Qwen3, DeepSeek R1 distill, GLM-4 | 30,000 | ⭐⭐ |
-| **Cloudflare Workers AI** | 10K Neurons/day | Llama, Qwen, Gemma | 30,000 | ⭐⭐ |
-| **Cohere** | 1,000/month fixed | Command R+, Rerank 3.5, Embed 4 | 1,000 | ⭐⭐ |
-| **Ollama (local)** | Unlimited | Any local model | ∞ | ⭐⭐⭐⭐ |
-
-### Tier 2 — Trial/Credits (อาจต้องบัตรเครดิต)
-
-| Provider | Free Credits | Models | Req (est) |
-|---|---|---|---:|
-| **Reka AI** | **$10/เดือน auto-refresh** | Reka Flash, Reka Core | 4,000 |
-| **Alibaba DashScope (Qwen)** | 1M tok input+output × 90 วัน | Qwen-Max/Plus/Turbo/VL, Coder | 133,000/mo |
-| **Together AI** | $25 signup credit | 71 models (DeepSeek, Llama 4, Qwen, Mixtral) | 25,000 |
-| **glhf.chat** | Beta free | ทุก HuggingFace model (Llama 405B, Qwen) | 10,000 |
-| **Hyperbolic** | $1 signup + promos | Llama 405B, DeepSeek R1 | 2,500 |
-| **HuggingFace** | $0.10/mo credits | 300+ community models | 2,000 |
-| **Fireworks AI** | $1 signup | 50+ optimized models | 1,000 |
-| **Kilo AI** | Optional key | AI gateway | varies |
-
-**รวม: 22.1M requests/เดือน (theoretical max) / 6.65M (practical)**
-
----
-
-## 🏗 Architecture
+## Architecture
 
 ```
-┌──────────────┐     3333      ┌───────────┐        ┌──────────────┐
-│ OpenAI SDK / ├──────────────▶│ Caddy     │───────▶│ sml-gateway    │
-│ น้องกุ้ง /    │    :3334      │ (proxy)   │        │ Next.js 16   │
-│ OpenClaw     │               └───────────┘        └──────┬───────┘
-└──────────────┘                                           │
-                                                           ▼
-            ┌─────────────────────────────────────────────┴───────────────────┐
-            │                      Smart Routing Engine                        │
-            │                                                                   │
-            │  1. Filter: enabled + hasKey + passed_exam + not cooldown        │
-            │  2. Category detect → boost winners                               │
-            │  3. Rank: success × 50k + exam × 3k − latency                    │
-            │  4. Hedge race top-3 (1 per provider)                              │
-            │  5. Fail → exponential cooldown → next candidate                  │
-            └──────┬──────────┬──────────┬──────────┬──────────┬──────────────┘
-                   ▼          ▼          ▼          ▼          ▼
-            ┌────────┐  ┌───────┐  ┌──────────┐  ┌────────┐  ┌──────────┐
-            │ NVIDIA │  │ Groq  │  │ Cerebras │  │Mistral │  │ 22 more  │
-            └────────┘  └───────┘  └──────────┘  └────────┘  └──────────┘
-
-                     ┌──────────────┬──────────────┐
-                     ▼              ▼              ▼
-              ┌──────────┐   ┌──────────┐   ┌──────────┐
-              │PostgreSQL│   │  Valkey  │   │  Caddy   │
-              │   :5434  │   │   :6382  │   │   :3334  │
-              └──────────┘   └──────────┘   └──────────┘
+┌──────────────┐     ┌─────────────────────┐     ┌──────────┐
+│  OpenAI SDK  │────▶│  Caddy (in-compose) │────▶│ Next.js  │
+│   client     │     │  :3334 → :3000      │     │ gateway  │
+└──────────────┘     └─────────────────────┘     └────┬─────┘
+                                                     │
+                              ┌──────────────────────┼──────────────────────┐
+                              ▼                      ▼                      ▼
+                        ┌──────────┐          ┌───────────┐          ┌───────────┐
+                        │Postgres  │          │  Valkey   │          │ Provider  │
+                        │pgvector  │          │ (Redis)   │          │  upstream │
+                        │  :5434   │          │   :6382   │          │  (21 key) │
+                        └──────────┘          └───────────┘          └───────────┘
 ```
 
----
+### Container
 
-## 📦 Stack
-
-| Layer | Tech |
-|---|---|
-| Framework | Next.js 16 (App Router) |
-| Runtime | Node.js + TypeScript 5 |
-| UI | React 19 + Tailwind v4 |
-| Database | PostgreSQL 17 + pgvector (driver: `postgres`) |
-| Cache/State | Valkey 8 (Redis-compatible) |
-| Reverse Proxy | Caddy 2 |
-| Scheduler | node-cron |
-| Testing | Vitest |
-| Load Testing | k6 |
-
-## 🚢 Services (docker-compose)
-
-| Container | Role | Host Port |
+| Container | Image | Port |
 |---|---|---|
-| `sml-gateway` | Next.js app (scalable) | internal `:3000` |
-| `caddy` | In-compose reverse proxy / load balancer | **`:3334`** |
-| `postgres` | PostgreSQL 17 + pgvector | `:5434` |
-| `redis` | Valkey 8 | `:6382` |
+| `sml-gateway-sml-gateway-1` | next.js app | 3000 (internal) |
+| `sml-gateway-caddy-1` | caddy:2-alpine | 3334 → 80 |
+| `sml-gateway-postgres-1` | pgvector/pgvector:pg17 | 5434 → 5432 |
+| `sml-gateway-redis-1` | valkey/valkey:8-alpine | 6382 → 6379 |
 
-### Port Map
+สเกล gateway หลายตัว: `docker compose up -d --scale sml-gateway=N` (Caddy load balance ให้)
 
-| Port | Service | หมายเหตุ |
-|---|---|---|
-| **3333** | SMLGateway via **external** Caddy | timeout 300s, production |
-| **3334** | SMLGateway via **in-compose** Caddy | scaling, load balanced |
-| 5434 | PostgreSQL (host) | |
-| 6382 | Valkey (host) | |
+### DB Schema (26 tables, highlights)
 
----
-
-## 🚀 ติดตั้ง (Installation Guide)
-
-### Prerequisites
-
-| Tool | Version | หมายเหตุ |
-|---|---|---|
-| Docker Desktop | 24+ | รองรับ docker compose v2 |
-| Node.js | 20+ | สำหรับ dev/build ภายนอก (optional) |
-| Git | 2.40+ | |
-
-### Step 1: Clone + Setup
-
-```bash
-git clone https://github.com/jaturapornchai/sml-gateway.git
-cd sml-gateway
-cp .env.example .env.local
-```
-
-### Step 2: สมัคร API Key อย่างน้อย 1 provider
-
-**แนะนำ 3 ตัวแรก (ฟรี ไม่ต้องบัตรเครดิต):**
-
-#### 🥇 Groq (ฟรีสุดคุ้ม)
-```bash
-# 1. เข้า https://console.groq.com/keys
-# 2. สมัคร account (Google/GitHub login ได้)
-# 3. คลิก "Create API Key" → copy
-# 4. ใส่ใน .env.local:
-GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxx
-```
-
-#### 🥈 NVIDIA NIM (168+ models)
-```bash
-# 1. เข้า https://build.nvidia.com/
-# 2. Sign in ด้วย Google/GitHub/Email
-# 3. เลือก model → คลิก "Get API Key" → copy
-NVIDIA_API_KEY=nvapi-xxxxxxxxxxxxxxxxxxxxxx
-```
-
-#### 🥉 Cerebras (เร็วที่สุด — LPU)
-```bash
-# 1. เข้า https://cloud.cerebras.ai/
-# 2. Sign up → Dashboard → API Keys
-# 3. Create API Key → copy
-CEREBRAS_API_KEY=csk-xxxxxxxxxxxxxxxxx
-```
-
-**เพิ่ม provider อื่นๆ ทีหลังได้ (ผ่าน UI หรือแก้ `.env.local`):**
-
-```bash
-# Free ถาวร ไม่ต้องบัตรเครดิต
-OPENROUTER_API_KEY=sk-or-v1-xxxx          # https://openrouter.ai/keys
-GOOGLE_AI_API_KEY=xxxx                     # https://aistudio.google.com/apikey
-SAMBANOVA_API_KEY=xxxx                     # https://cloud.sambanova.ai
-MISTRAL_API_KEY=xxxx                       # https://console.mistral.ai
-CHUTES_API_KEY=xxxx                        # https://chutes.ai/
-LLM7_API_KEY=xxxx                          # https://token.llm7.io/
-SCALEWAY_API_KEY=xxxx                      # https://console.scaleway.com/
-POLLINATIONS_API_KEY=                      # https://enter.pollinations.ai/ (optional)
-OLLAMA_CLOUD_API_KEY=xxxx                  # https://ollama.com/cloud
-SILICONFLOW_API_KEY=xxxx                   # https://siliconflow.com/
-GLHF_API_KEY=xxxx                          # https://glhf.chat/
-ZAI_API_KEY=xxxx                           # https://z.ai/manage-apikey/apikey-list
-DASHSCOPE_API_KEY=xxxx                     # https://bailian.console.alibabacloud.com/
-
-# Trial credits
-TOGETHER_API_KEY=xxxx                      # https://api.together.xyz/settings/api-keys
-HYPERBOLIC_API_KEY=xxxx                    # https://app.hyperbolic.ai/signup
-REKA_API_KEY=xxxx                          # https://platform.reka.ai/
-COHERE_API_KEY=xxxx                        # https://dashboard.cohere.com/api-keys
-FIREWORKS_API_KEY=xxxx                     # https://fireworks.ai/account/api-keys
-HF_TOKEN=xxxx                              # https://huggingface.co/settings/tokens
-GITHUB_MODELS_TOKEN=xxxx                   # https://github.com/settings/tokens
-CLOUDFLARE_API_TOKEN=xxxx                  # https://dash.cloudflare.com/profile/api-tokens
-CLOUDFLARE_ACCOUNT_ID=xxxx
-
-# Judge (DeepSeek — cheap, used for optional re-grading)
-DEEPSEEK_API_KEY=xxxx                      # https://platform.deepseek.com
-
-# Ollama local
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_API_KEY=ollama
-```
-
-### Step 3: Build + Deploy
-
-```bash
-# Verify build
-rtk npx next build
-# ต้องเห็น: Errors: 0 | Warnings: 0
-
-# Start containers
-rtk docker compose up -d --build
-
-# รอ container healthy (~30 วินาที)
-sleep 10 && curl -s -o /dev/null -w "HTTP %{http_code}\n" http://localhost:3334/
-# ควรได้: HTTP 200
-```
-
-### Step 4: Trigger Worker Scan
-
-```bash
-curl -X POST http://localhost:3334/api/worker
-# ระบบจะเริ่ม:
-# 1. Scan models จากทุก provider ที่มี key
-# 2. Health check
-# 3. Exam (สอบ 25 model/รอบ, concurrency 5)
-
-# ตรวจสถานะ:
-curl -s http://localhost:3334/api/status | python -m json.tool
-```
-
-### Step 5: เปิด Dashboard
-
-```
-http://localhost:3334/
-```
-
-- **ครูใหญ่** — Worker status + judge model
-- **นักเรียนใหม่** — Models ที่เพิ่ง scan เจอ
-- **สมุดจดงาน** — Real-time gateway logs
-- **ModelGrid** — All models + exam scores
-- **ProviderStatus** — 26 provider cards
-- **SetupModal** — ตั้งค่า API key + toggle provider
-
-### Step 6: Verify Installation
-
-ตรวจสอบว่าทุกอย่างพร้อม:
-
-```bash
-# 1. Container ทั้งหมด healthy
-docker ps --format "{{.Names}}\t{{.Status}}" | grep sml-gateway
-
-# ต้องเห็น:
-#  sml-gateway-sml-gateway-1   Up (healthy)
-#  sml-gateway-caddy-1       Up
-#  sml-gateway-postgres-1    Up (healthy)
-#  sml-gateway-redis-1       Up (healthy)
-
-# 2. API health check
-curl -s http://localhost:3334/api/health | python -m json.tool
-
-# 3. ดู providers ที่ active
-curl -s http://localhost:3334/api/providers | python -c "
-import sys, json
-for p in json.load(sys.stdin):
-  icon = '✅' if p['status']=='active' else '⏸'
-  print(f\"{icon} {p['provider']:15} status={p['status']:10} models={p.get('modelCount',0)}\")
-"
-
-# 4. ดู models ที่ผ่านสอบแล้ว
-curl -s http://localhost:3334/api/status | python -c "
-import sys, json
-d = json.load(sys.stdin)
-print(f\"Total: {d['stats']['totalModels']}\")
-print(f\"Available: {d['stats']['availableModels']}\")
-print(f\"Passed exam: {d['stats']['benchmarkedModels']}\")
-"
-```
-
-### Step 7: First API Call
-
-```bash
-# ทดสอบ chat
-curl -X POST http://localhost:3334/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "sml/auto",
-    "messages": [
-      {"role": "user", "content": "สวัสดี ตอบสั้นๆ ภาษาไทย"}
-    ]
-  }' | python -m json.tool
-```
-
-**ถ้าได้ response 200 + content ภาษาไทย → ติดตั้งสำเร็จ ✅**
-
-### Step 8: Production Tips
-
-#### เปิด External Caddy (port 3333, timeout 300s)
-
-สำหรับ production ที่ต้องการรับ request ยาว (coding agents, long context):
-
-```bash
-# แก้ Caddyfile (external)
-# dev.sml-gateway.com {
-#     reverse_proxy localhost:3334 {
-#         timeout 300s
-#     }
-# }
-
-# Reload
-powershell -File "C:/Users/jatur/restart-caddy.ps1"
-```
-
-#### Scale Horizontal
-
-```bash
-docker compose up -d --scale sml-gateway=3
-# → Caddy in-compose จะ load balance + Redis leader election ป้องกัน duplicate worker
-```
-
-#### Monitor
-
-```bash
-# Real-time gateway logs
-docker logs sml-gateway-sml-gateway-1 -f | grep -E "\[REQ:|\[RES:"
-
-# Worker status
-watch -n 5 "curl -s http://localhost:3334/api/status | python -m json.tool | grep -A5 worker"
-
-# Learning progress
-curl -s http://localhost:3334/api/learning | python -m json.tool
-```
-
----
-
-## 🎓 ระบบสอบ (Exam System)
-
-Model ใหม่ทุกตัวต้องผ่านสอบก่อนได้รับ request จริง **ผ่าน ≥ 85%** (คิดเฉพาะข้อที่ทำจริง — ข้อ vision/tools ที่ model ไม่รองรับจะ skip ไม่นับ)
-
-### ข้อสอบ 25 ข้อ — เน้นใช้งานจริง (rule-based check)
-
-| # | หมวด | ทดสอบ | วิธีตรวจ |
-|---|---|---|---|
-| 1 | `instruction` | ตอบ "42" เท่านั้น | exact match |
-| 2 | `instruction` | คำนวณ 7×8 โดยไม่ถูกหลอกจาก background text | ตัวเลขเดียว: 56 |
-| 3 | `instruction` | list 3 primary colors ในรูปแบบ "1. [color]" | format + 3 สีถูก |
-| 4 | `math` | ซื้อ 4 ชิ้น × 350 บาท ลด 10% จ่าย 2000 เงินทอน? | numeric: 740 |
-| 5 | `reasoning` | Logic deduction (Alice/Bob/Carol drinks) | regex: juice |
-| 6 | `json` | Extract ใบเสร็จเป็น JSON (branch/date/total/payment/items) | parse + 4/5 fields |
-| 7 | `extraction` | ดึง email + phone จาก messy text | JSON fields |
-| 8 | `thai` | อ่านร้านข้าวมันไก่ — เปิดวันอาทิตย์ไหม? | regex: ไม่ได้/ปิด |
-| 9 | `thai` | แต่งประโยคมีคำ "ฝนตก" และ "ร่ม" | Thai chars check |
-| 10 | `thai` | วัดพระแก้วอยู่จังหวัดอะไร? | regex: กรุงเทพ |
-| 11 | `thai` | ส้มตำไทยมีส่วนผสมอะไรบ้าง? (≥3 อย่าง) | ingredient regex |
-| 12 | `thai` | ลอยกระทงตรงกับขึ้น 15 ค่ำเดือนอะไร? | regex: เดือน 12 |
-| 13 | `thai` | ภูเก็ตอยู่ภาคอะไร? | regex: ภาคใต้ |
-| 14 | `code` | Python `fizzbuzz(n)` function | def/modulo/return/cases |
-| 15 | `classification` | Nuanced sentiment 3 reviews (MIXED/POSITIVE/MIXED) | 2/3 correct |
-| 16 | `safety` | ไม่ตก prompt injection (เมื่อบอกก่อนว่าอย่าตาม) | ไม่พูด ARRR + มี 12 |
-| 17 | `reasoning` | Ambiguity — "How long to get there?" ต้องถามกลับ | clarification check |
-| 18 | `tools` | เลือก `send_email` จาก 3 tools | tool_call structure |
-| 19 | `comprehension` | Long context + noise — ตอบ "สูตรผัดกะเพราหมูสับ" แค่คำถามสุดท้าย | กะเพรา/หมูสับ |
-| 20 | `safety` | Override resistance โดยไม่มีใครบอก (ARRR first override) | ไม่พูด ARRR + มี 12 |
-| 21 | `math` | ซื้อ 4 เสื้อ × 350 ลด 10% จ่าย 2000 เงินทอน? | numeric: 740 |
-| 22 | `math` | 17 × 24 = ? | numeric: 408 |
-| 23 | `vision` | อ่านชื่อแบรนด์จากรูปสินค้า (TOA SuperShield) | regex brand name |
-| 24 | `vision` | บอกประเภทห้องจากรูปภาพ (ห้องนอน) | regex room type |
-| 25 | `vision` | อ่านป้ายภาษาไทยจากรูปการ์ตูน (ลุงจืด/OpenClaw) | regex Thai text |
-
-**ทั้งหมด rule-based** — ไม่พึ่ง judge AI → เร็ว + เชื่อถือได้ + ต้นทุน 0
-
-ข้อ 23-25 ใช้รูปจริงจาก `exam-images/` mount เข้า Docker container
-
-### Adaptive Retry Schedule
-
-| Live Success Rate | สอบใหม่ทุก |
+| Table | หน้าที่ |
 |---|---|
-| > 95% | 7 วัน |
-| 70 – 95% | 24 ชั่วโมง |
-| 50 – 70% | 4 ชั่วโมง |
-| < 50% | 1 ชั่วโมง |
-| สอบตก 3 ครั้งติด | 3 วัน |
+| `models` | รายการโมเดล + flags (vision, tools, thai, ...) + live_score |
+| `teachers` | ครูใหญ่ + ครูหัวหน้าต่อ category + ครูคุมสอบ (rebuild ทุก cycle) |
+| `model_category_scores` | คะแนนรายโมเดลต่อ 12 หมวด (code, thai, tools, vision, ...) |
+| `exam_attempts` / `exam_answers` | ผลสอบ 25 ข้อ, threshold 50% |
+| `gateway_logs` | log ทุก request (model, provider, latency, status) |
+| `health_logs` | ping ทุก cycle + cooldown_until |
+| `model_fail_streak` | fail streak + cooldown exponential |
+| `provider_limits` | TPM/TPD/RPM ที่ parse จาก response header |
+| `semantic_cache` | pgvector cosine similarity cache |
+| `routing_stats` | p50/p99 latency ต่อ provider |
 
 ---
 
-## 🧠 Self-Tuning Learning
+## Virtual Models
 
-ทุก request → ระบบเรียนรู้อัตโนมัติ → ไม่ต้อง config
-
-### 1. Capacity Learning — `model_samples` + `model_capacity`
-เก็บ **token size ที่ model ทำได้จริง** (p90 จาก 100 success ล่าสุด):
-```
-mistral:mistral-medium-latest       p90=60322  max=61014  n=16
-mistral:mistral-vibe-cli-with-tools p90=12258  max=60828  n=14
-cerebras:qwen-3-235b                p90= 9485  max=10327  n=16
-```
-Routing: ถ้า request ขนาดใกล้เคียง `recent min_failed` → skip → ประหยัด timeout
-
-### 2. Category Winners — `category_winners`
-11 categories: `thai`, `code`, `math`, `tools`, `vision`, `long-context`, `medium-context`, `knowledge`, `translate`, `classification`, `general`
-
-```
-code         → cerebras:qwen-3-235b    wins=2  (100%)
-tools        → mistral:mistral-vibe    wins=12 (86%)
-long-context → mistral:mistral-medium  wins=4  (100%)
-thai         → mistral:mistral-medium  wins=3  (83%)
-```
-
-Request ใหม่ → detect category → boost winners ขึ้นบน
-
-### 3. Provider Rate Limits — `provider_limits`
-เรียนรู้จาก **3 แหล่ง**:
-1. **Response headers** (`x-ratelimit-limit-tokens`, `remaining-tokens`, `reset-tokens`)
-2. **Error 429 message** — parse `"Limit 100000, Used 91788"`
-3. **Persist ลง DB** + Redis cache 5 นาที
-
-ก่อนยิง → `canFitRequest()` เช็ค remaining → skip ถ้าไม่พอ
-
-### 4. Exponential Cooldown — `model_fail_streak`
-```
-streak 1 → 10 วินาที
-streak 2 → 20 วินาที
-streak 3 → 40 วินาที
-streak 4 → 80 วินาที
-streak 5+ → 2 นาที (cap)
-```
-- **Auto-reset** ถ้า fail ก่อนหน้าเกิน 10 นาที
-- **Success → reset streak = 0** ทันที
-- ไม่มี permanent ban
-
-### 5. Live Score EMA — in-memory
-```
-[PROVIDER-RANK] cerebras(100%/2651ms/n=2) > mistral(70%/n=0) > groq(0%/n=2)
-```
-- α = 0.25 (ใหม่มีน้ำหนัก 25%)
-- อัพเดททุก request — ไม่ต้องรอ batch
-- Fail → ดันลง ranking ทันที
-
----
-
-## 🎯 Smart Routing Pipeline
-
-```
-Request → Detect category (thai/code/tools/...)
-       → Get candidates (passed_exam + enabled + hasKey + not cooldown)
-       → Category boost (winners ขึ้นบน)
-       → Filter: hasProviderKey + isProviderEnabled
-       → Provider cooldown check (Redis)
-       → Size filter (context_length >= required × 1.4)
-       → Capacity check (recent failures)
-       → MIN-CTX filter (context ≥ 16K)
-       → LAT-CAP filter (exam latency ≤ 30s)
-       → Provider limits check (TPM/TPD remaining)
-       → TPM hard check (request > limit → skip)
-       → Rank by success × 50k + exam × 3k − latency
-         (candidates must have exam score_pct >= 85)
-       → Hedge race top-3 different providers (parallel, non-tools only)
-       → Fail → Exponential cooldown → next candidate
-       → All fail → Relaxed retry (ignore soft filters)
-       → All fail → 503 with skip reasons breakdown
-```
-
-### Per-attempt Timeout (dynamic, non-stream)
-
-| Body Size | Timeout |
+| Model | เลือกยังไง |
 |---|---|
-| < 10K chars | 12s |
-| 10K – 20K | 20s |
-| 20K – 40K | 35s |
-| > 40K | 60s |
-| Ollama | 30s |
+| `sml/auto` | อัตโนมัติ — ประเมินจาก category ของ prompt แล้วเลือกครูหัวหน้าของหมวดนั้น |
+| `sml/fast` | latency ต่ำสุด (p50) |
+| `sml/tools` | รองรับ tool calling |
+| `sml/thai` | ครูหัวหน้าหมวด thai |
+| `sml/consensus` | ยิงไปหลายโมเดลแล้วเลือกคำตอบที่ตรงกันมากสุด |
 
-### Total Retry Budget
+เรียก model ตรงได้เหมือนเดิม — ใส่ `modelId` ของ provider เช่น `groq/llama-3.3-70b-versatile`
 
-| Est Tokens | Budget |
+---
+
+## โรงเรียน — Exam + Teachers
+
+ระบบจำลอง "โรงเรียน":
+
+- **ครูใหญ่ (principal)** — 1 ตัว, คะแนนรวมสูงสุด, ใช้ตอบ request ที่ไม่ระบุ category
+- **ครูหัวหน้าหมวด (head)** — 1 ตัวต่อ category (12 หมวด: code, thai, tools, vision, math, reasoning, extraction, classification, comprehension, instruction, json, safety)
+- **ครูคุมสอบ (proctor)** — ≤ 10 ตัว, ใช้ออกและเกรดข้อสอบ
+
+**Exam:** 25 คำถาม (mixed category) + threshold 50% → โมเดลที่ผ่านเข้า pool
+**Appoint:** หลัง exam ทุก cycle → `DELETE FROM teachers` + bulk insert (atomic swap)
+**Routing:** `sml/auto` + category prompt → route ไปครูหัวหน้าของหมวดนั้นก่อน
+
+---
+
+## Smart Routing
+
+1. **Category detect** — infer จาก prompt (code / thai / tools / vision / ...)
+2. **Pool filter** — ตัด model ที่ `cooldown_until > now()` ออก
+3. **Context filter** — ถ้า `estTokens > 20K` เลือกเฉพาะ model ที่ `context_length > estTokens × 1.5`
+4. **Hedge top-3** — ยิง 3 ตัวบนสุดพร้อมกัน, ใครตอบก่อนชนะ
+5. **Fail → cooldown** — exponential (10s → 2m cap) ตาม `streak_count`
+6. **Circuit breaker** — half-open probe หลัง 30s
+7. **Semantic cache** — ถ้า cosine ≥ 0.92 → คืน cache ทันที
+
+**เป้าหมาย:** p99 latency ~3s, success rate ~98%, 503 rate <1%
+**Cost:** ไม่สนใจ — เน้น quality + latency (user rule)
+
+---
+
+## API
+
+| Endpoint | หน้าที่ |
 |---|---|
-| > 40K | 120s |
-| > 20K | 90s |
-| > 10K | 60s |
-| else | 30s |
+| `POST /v1/chat/completions` | OpenAI-compatible chat (text / vision / tools / stream) |
+| `GET  /v1/models` | รายการโมเดลทั้งหมด (รวม virtual models) |
+| `POST /v1/completions` | legacy completion endpoint |
+| `POST /v1/embeddings` | embeddings (proxy ไป provider ที่รองรับ) |
+| `GET  /api/status` | health summary + counts |
+| `GET  /api/models` | model list + category scores |
+| `GET  /api/teachers` | รายการครู (principal + heads + proctors) |
+| `GET  /api/provider-limits` | TPM/TPD/RPM ต่อ provider |
+| `GET  /api/semantic-cache` | cache stats + top entries |
+| `GET  /api/warmup-stats` | warmup cycle stats |
+| `GET  /api/metrics` | Prometheus text format |
+| `POST /api/worker` | trigger scan+exam cycle ด้วยมือ |
+| `GET  /guide` | คู่มือเชื่อมต่อ (long-form page) |
+| `GET  /` | dashboard |
 
----
-
-## 🔌 API Endpoints
-
-### Gateway (OpenAI-compatible)
-
+**Response headers ของ `/v1/chat/completions`:**
 ```
-POST /v1/chat/completions       # ยิง request — auto routing
-POST /v1/chat/completions       # stream=true → SSE
-GET  /v1/models                 # รายการ model ที่ผ่านสอบ
-```
-
-### Model Selection
-
-```
-model: "sml/auto"           # Smart routing (default)
-model: "sml/fast"           # เน้น latency ต่ำ
-model: "sml/tools"          # เน้น tool calling
-model: "sml/thai"           # เน้นภาษาไทย
-model: "sml/consensus"      # ยิง 3 model parallel เลือก consensus
-model: "groq/llama-3.1-8b"      # Direct provider routing
-model: "nvidia/meta/llama-3.3-70b-instruct"
-model: "chutes/deepseek-ai/DeepSeek-R1"
-```
-
-### Admin / Dashboard
-
-| Endpoint | คำอธิบาย |
-|---|---|
-| `GET /api/status` | Worker status + stats + recent logs |
-| `GET /api/models` | รายการ model ทั้งหมด + exam result + cooldown |
-| `GET /api/providers` | Provider status + enabled + model count |
-| `GET /api/learning` | Category winners + capacities + fail streaks |
-| `GET /api/provider-limits` | TPM/TPD ที่เรียนรู้จากแต่ละ model |
-| `GET /api/live-score` | Live EMA score snapshot |
-| `GET /api/gateway-logs` | Request history |
-| `GET /api/analytics` | Token usage + cost analytics |
-| `GET /api/leaderboard` | Top performing models |
-| `GET /api/infra` | Infrastructure health (DB, Valkey) |
-| `GET /api/uptime` | Uptime per provider |
-| `GET /api/trend` | Time-series metrics |
-| `GET /api/metrics` | Prometheus metrics |
-| `GET /api/warmup-stats` | Warmup worker stats |
-| `GET /api/semantic-cache` | Semantic cache stats |
-| `GET /api/routing-stats` | Routing analytics |
-| `GET /api/cost-optimizer` | Cost optimization analysis |
-| `GET /api/cost-savings` | Cost savings metrics |
-| `GET /api/dev-suggestions` | Developer suggestions |
-| `GET /api/chat` | Chat endpoint |
-| `GET /api/codegen` | Code generation |
-| `GET /api/complaint` | Complaint system |
-| `GET /api/teachers` | Judge models |
-| `POST /api/worker` | Trigger worker cycle manually |
-| `POST /api/setup` | Add/remove API key or toggle provider |
-
----
-
-## 🗃 Database Schema
-
-### Core
-- `models` — Model metadata (provider, context_length, capabilities)
-- `api_keys` — Runtime-configurable API keys
-- `provider_settings` — Enable/disable provider toggle
-
-### Exam System
-- `exam_attempts` — Every exam run (attempt_number, score_pct, passed, next_exam_at, consecutive_fails)
-- `exam_answers` — Per-question results (answer, passed, check_method, fail_reason)
-
-### Learning
-- `model_fail_streak` — Exponential cooldown counter
-- `model_capacity` — p90 token capacity per model
-- `model_samples` — Ring buffer (500 samples/model)
-- `category_winners` — Wins/losses per (category, model)
-- `provider_limits` — Learned TPM/TPD per provider/model
-- `discovered_questions` — Patterns ที่ทำให้ model fail
-
-### Runtime
-- `health_logs` — Health check + cooldown_until
-- `gateway_logs` — ทุก request (ก่อน/หลัง routing)
-- `worker_logs` · `worker_state`
-- `routing_stats` · `events` · `token_usage`
-- `complaints` / `complaint_exams`
-
-### Views
-- `benchmark_results` (VIEW) — Read-only compat mapping
-
----
-
-## 🔍 Observability
-
-Every request gets a **Request ID** — trace ทั้ง chain ได้:
-
-```
-[REQ:abc123]            sml/auto | tools=true | msgs=7 | est=9315tok | "..."
-[CATEGORY-BOOST:abc123] "tools" → 3 winners: cerebras, mistral-medium, mistral-vibe
-[PROVIDER-RANK:abc123]  cerebras(100%/2651ms/n=2) > mistral(70%/n=0) > groq(0%/n=2)
-[CANDIDATES:abc123]     12 candidates | top5: cerebras/qwen-3-235b(ctx=131072), ...
-[LIMIT-SKIP:abc123]     groq/llama-3.3-70b — TPD: remaining 103 < needed 10021
-[RETRY:abc123]          1/10 | cerebras/qwen-3-235b → HTTP 429 | tokens per minute
-[LIMIT-LEARN]           cerebras/qwen-3-235b error-generic
-[EXPO-COOLDOWN:abc123]  cerebras/qwen-3-235b → 1min
-[TIMEOUT-ATTEMPT:abc123] mistral/mistral-medium timeout → 1min
-[SKIPS:abc123]          tried=2, skipped=3 — {"tpm-exhausted":2,"limit-exhausted":1}
-[RES:abc123]            200 | mistral/mistral-vibe-cli-with-tools | 12918ms
+X-SMLGateway-Model       ชื่อ model ที่ตอบจริง
+X-SMLGateway-Provider    provider ที่ตอบ
+X-SMLGateway-Latency-Ms  latency ms
+X-SMLGateway-Cache       HIT / MISS
+X-SMLGateway-Hedge       winner index (0-2)
 ```
 
 ---
 
-## ⚙️ Worker Cycle
+## Integration
 
-รันทุก **15 นาที** (+ trigger manual ได้):
-
-```
-Step 1: Scan     → ดึง model จากทุก provider ที่มี key + enabled
-                   ลบ model ที่ provider หายไป
-Step 2: Health   → ping ทุก model ด้วย timeout 5s
-                   auto-detect non-chat model จาก response
-Step 3: Exam     → สอบสูงสุด 25 model/รอบ (concurrency 5)
-                   adaptive schedule ตาม next_exam_at
-```
-
-### Leader Election
-Multi-replica safe — ใช้ Redis leader lock:
-```bash
-docker compose up -d --scale sml-gateway=3
+### Next.js / Node
+```ts
+import OpenAI from "openai";
+const client = new OpenAI({ baseURL: "http://localhost:3334/v1", apiKey: "dummy" });
+const chat = await client.chat.completions.create({
+  model: "sml/auto",
+  messages: [{ role: "user", content: "สวัสดี" }],
+});
 ```
 
----
-
-## 🔗 Integration Examples
-
-### OpenAI SDK (Python)
-
+### Python
 ```python
 from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://localhost:3334/v1",
-    api_key="dummy"  # sml-gateway ไม่บังคับ
-)
-
-response = client.chat.completions.create(
+client = OpenAI(base_url="http://localhost:3334/v1", api_key="dummy")
+chat = client.chat.completions.create(
     model="sml/auto",
-    messages=[{"role": "user", "content": "สวัสดีครับ"}]
+    messages=[{"role": "user", "content": "สวัสดี"}],
 )
-print(response.choices[0].message.content)
 ```
 
-### OpenClaw (Docker)
+### LangChain
+```python
+from langchain_openai import ChatOpenAI
+llm = ChatOpenAI(base_url="http://localhost:3334/v1", api_key="dummy", model="sml/auto")
+```
 
+### OpenClaw
 ```bash
-docker exec openclaw-bcproxy-test openclaw onboard \
+# ในคอนเทนเนอร์ OpenClaw
+openclaw onboard \
   --non-interactive --accept-risk \
   --auth-choice custom-api-key \
   --custom-base-url http://host.docker.internal:3333/v1 \
-  --custom-model-id auto \
+  --custom-model-id sml/auto \
   --custom-api-key dummy \
-  --custom-compatibility openai
-
-docker exec openclaw-bcproxy-test openclaw agent --agent main -m "สวัสดี"
+  --custom-compatibility openai \
+  --skip-channels --skip-daemon --skip-health \
+  --skip-search --skip-skills --skip-ui
 ```
 
-### cURL
-
-```bash
-curl -X POST http://localhost:3334/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "sml/auto",
-    "messages": [{"role": "user", "content": "Write Python fibonacci"}]
-  }'
-```
-
-### Direct Provider Routing
-
-```bash
-# ระบุ provider ตรงๆ
-curl -X POST http://localhost:3334/v1/chat/completions \
-  -d '{"model":"nvidia/meta/llama-3.3-70b-instruct","messages":[...]}'
-curl -X POST http://localhost:3334/v1/chat/completions \
-  -d '{"model":"chutes/deepseek-ai/DeepSeek-R1","messages":[...]}'
-curl -X POST http://localhost:3334/v1/chat/completions \
-  -d '{"model":"groq/llama-3.1-8b-instant","messages":[...]}'
-```
+ตัวอย่างเพิ่มเติม (vision, tools, streaming, 6 ภาษา) → เปิด `http://localhost:3334/guide`
 
 ---
 
-## 📊 Dashboard Features
+## Port Map
 
-- **ครูใหญ่** — Worker status + judge model + next run
-- **นักเรียนใหม่** — Recently discovered models (checked vs pending)
-- **สมุดจดงาน** — Real-time gateway logs with filters
-- **ModelGrid** — All models with exam scores, cooldown, capabilities
-- **ProviderStatus** — 26 provider cards (active / no_key / error / disabled)
-- **InfraPanel** — Postgres · Valkey · Replicas · Rate Limit
-- **SchoolBell** — System events feed
-- **StatsCards** — Total / Available / Cooldown / Passed / Avg Score
-- **ProviderLimitsPanel** — โควต้า Provider (TPM/TPD remaining)
-- **AnalyticsPanel** — Token usage analytics
-- **WarmupPanel** — Warmup worker stats
-- **SemanticCachePanel** — Semantic cache hits
-- **SpeedRace** — Model speed comparison
-- **TrendPanel** — Time-series trends
-- **RoutingLearn** — Routing learning stats
-- **CostOptimizer** — Cost optimization
-- **ComplaintPanel** — Auto-complaint system
-- **SetupModal** — Add/remove API keys, toggle provider on/off
-
-UI เป็นภาษาไทยทั้งหมด
+| Port | Service |
+|------|---------|
+| 3333 | SMLGateway via external Caddy (300s timeout) |
+| 3334 | SMLGateway via in-compose Caddy (load balanced) |
+| 5434 | Postgres (pgvector) |
+| 6382 | Valkey (Redis-compatible) |
 
 ---
 
-## 🎛 Provider Management (UI)
+## Development
 
-เปิด/ปิด provider ได้ผ่าน Setup Modal — ไม่ต้อง restart:
-
-```
-Setup Modal → Toggle switch per provider
-           → POST /api/setup { provider, enabled: bool }
-           → Cache 5s in memory + persist DB
-           → Scanner skip disabled provider in next cycle
-           → Gateway filter candidates ทันที (hot reload)
-```
-
----
-
-## 🛠 Troubleshooting
-
-### 🔴 Container ไม่ start / Healthcheck fail
+Stack: Next.js 16 (App Router) · TypeScript 5 · Postgres (pgvector) · Valkey · Docker Compose
 
 ```bash
-# ดู log
-docker logs sml-gateway-sml-gateway-1 --tail=50
-
-# ตรวจ postgres + valkey พร้อมไหม
-docker ps --format "{{.Names}}\t{{.Status}}"
-
-# Restart ทั้งหมด
-docker compose down && docker compose up -d --build
-```
-
-**สาเหตุที่พบบ่อย:**
-- `.env.local` ไม่มี หรือ format ผิด → `cp .env.example .env.local` แล้วเพิ่ม key ใหม่
-- Port 3334/5434/6382 ถูกใช้อยู่ → แก้ `docker-compose.yml` port mapping
-- Docker Desktop ไม่รัน → เปิดก่อน `docker compose up`
-
-### 🔴 HTTP 503 — ไม่มี candidates
-
-```
-All 0 models from 0 providers failed
-```
-
-**สาเหตุ:** ยังไม่มี model ผ่านสอบในระบบ
-
-**แก้:**
-```bash
-# 1. ตรวจ provider ที่ตั้ง key แล้ว
-curl -s http://localhost:3334/api/providers | python -m json.tool
-
-# 2. Trigger worker scan → exam
-curl -X POST http://localhost:3334/api/worker
-
-# 3. รอ 2-5 นาที ให้สอบเสร็จ แล้วตรวจ
-curl -s http://localhost:3334/api/status | python -m json.tool
-
-# 4. ดู model ที่ผ่านสอบ
-docker exec sml-gateway-postgres-1 psql -U sml -d smlgateway -c "
-SELECT m.provider, m.model_id, ea.score_pct::int as score
-FROM models m
-INNER JOIN (SELECT DISTINCT ON (model_id) model_id, score_pct
-            FROM exam_attempts WHERE passed = true
-            ORDER BY model_id, started_at DESC) ea
-ON m.id = ea.model_id
-ORDER BY ea.score_pct DESC LIMIT 20;
-"
-```
-
-### 🔴 HTTP 503 — TPM exhausted
-
-```
-tpm-exhausted: groq/llama-3.1-8b-instant
-```
-
-**สาเหตุ:** Request ขนาดใหญ่เกิน rate limit ของ free tier
-
-**แก้:** เพิ่ม provider ที่ context/TPM สูงกว่า:
-- Chutes.ai (no monthly cap)
-- Mistral (1B tok/month per model)
-- SambaNova (30 RPM × 2.5K tok)
-- Ollama local (unlimited)
-
-### 🔴 Model ตอบช้า / Timeout
-
-**Check:**
-```bash
-# ดู live score + ranking
-curl -s http://localhost:3334/api/live-score
-
-# ดู fail streak
-curl -s http://localhost:3334/api/learning | python -m json.tool
-```
-
-**แก้:**
-- Slow model จะถูก cooldown อัตโนมัติหลัง exponential fails
-- ถ้ายังช้า → toggle provider ปิดผ่าน UI (SetupModal)
-- หรือเพิ่ม per-attempt timeout ใน `route.ts` สำหรับ request ใหญ่
-
-### 🔴 Build fail / TypeScript errors
-
-```bash
-# Clean rebuild
-rm -rf .next node_modules
-npm install
-npx next build
-```
-
-### 🔴 Worker cycle ไม่ run อัตโนมัติ
-
-```bash
-# Manual trigger
-curl -X POST http://localhost:3334/api/worker
-
-# ตรวจ worker state
-curl -s http://localhost:3334/api/status | python -m json.tool | grep -A5 worker
-```
-
-### 🔴 Cooldown หายช้า
-
-Cooldown จะ auto-reset ตามเวลา แต่ถ้าต้องการเคลียร์ทันที:
-
-```bash
-docker exec sml-gateway-postgres-1 psql -U sml -d smlgateway -c "
-DELETE FROM health_logs WHERE cooldown_until > now();
-DELETE FROM model_fail_streak;
-"
-```
-
-### 🔴 Provider key ใหม่ไม่ถูก scan
-
-```bash
-# 1. ตรวจว่า provider ไม่ถูก toggle ปิด
-curl -s http://localhost:3334/api/providers | python -c "
-import sys, json
-for p in json.load(sys.stdin):
-  print(f\"{p['provider']:15} enabled={p.get('enabled',True)} status={p['status']}\")
-"
-
-# 2. Trigger scan manually
-curl -X POST http://localhost:3334/api/worker
-
-# 3. รอ 30 วินาที แล้วดู log
-docker logs sml-gateway-sml-gateway-1 --tail=50 | grep -i scan
-```
-
----
-
-## ❓ FAQ
-
-### Q: ต้องใส่ API key กี่ provider ถึงจะพอ?
-**A:** อย่างน้อย **1 ตัว** ก็ใช้ได้ แต่แนะนำ **3+ ตัว** เพื่อมี fallback เวลา 1 ตัวติด cooldown:
-- **Minimum:** Groq (14.4K req/day, ฟรี)
-- **Recommended:** Groq + NVIDIA NIM + Cerebras (คุณภาพผสมหลากหลาย)
-- **Heavy use:** เพิ่ม Mistral + SambaNova + Chutes.ai
-
-### Q: Model อะไรเร็วที่สุด?
-**A:** ตาม live score ระบบจะเลือกเองอัตโนมัติ แต่โดยทั่วไป:
-- **Cerebras** → wafer-scale, ~2000+ tok/s (Llama, Qwen, gpt-oss)
-- **Groq** → LPU, ~500+ tok/s (Llama, Mixtral, Kimi)
-- **SambaNova** → RDU, ~300 tok/s (Llama, Qwen)
-
-### Q: Model อะไรฉลาดที่สุด?
-**A:** ระดับ flagship ที่ฟรี:
-- **DeepSeek V3/R1** (671B) via Ollama Cloud, Chutes.ai, OpenRouter
-- **Qwen3-235B** via Cerebras, NVIDIA NIM, Chutes.ai
-- **Llama 3.1 405B** via Hyperbolic, glhf.chat, SambaNova
-- **Kimi K2** via Groq, Chutes.ai
-
-### Q: รองรับ streaming ไหม?
-**A:** ได้ ส่ง `"stream": true` ใน request → SSE format เหมือน OpenAI
-
-### Q: รองรับ tool calling / function calling ไหม?
-**A:** ได้ ระบบจะเลือก model ที่รองรับ tools อัตโนมัติ (กรองด้วย `supports_tools=1`)
-
-### Q: รองรับ vision (รูปภาพ) ไหม?
-**A:** ได้ ส่ง image_url ใน message → ระบบเลือก vision model (Gemini, Qwen-VL, Llama-Vision)
-
-### Q: Dashboard เข้าจากไหน?
-**A:** `http://localhost:3334/` (ถ้า scale multiple replicas ผ่าน in-compose Caddy)
-หรือ `http://localhost:3333/` (ถ้า deploy ผ่าน external Caddy)
-
-### Q: Scale horizontal ได้ไหม?
-**A:** ได้ ใช้ Redis leader election:
-```bash
-docker compose up -d --scale sml-gateway=3
-```
-
-### Q: Ollama local ต้องติดตั้งยังไง?
-**A:**
-```bash
-# Mac/Windows
-curl -fsSL https://ollama.com/install.sh | sh
-
-# Pull models
-ollama pull llama3.1
-ollama pull qwen2.5-coder
-
-# Set in .env.local
-OLLAMA_BASE_URL=http://host.docker.internal:11434
-```
-
-### Q: ต้องการเปลี่ยน rate limit เอง?
-**A:** ระบบเรียนรู้ auto จาก response headers + 429 messages ไม่ต้องตั้งเอง
-แต่ถ้าต้องการ override ตั้งใน `src/lib/tpm-tracker.ts` → `MODEL_TPM` map
-
-### Q: Log อยู่ไหน?
-**A:**
-- Worker logs → `worker_logs` table + `/api/status` endpoint
-- Gateway logs → `gateway_logs` table + `/api/gateway-logs` endpoint
-- Container logs → `docker logs sml-gateway-sml-gateway-1`
-- Dashboard → "สมุดจดงาน" panel (realtime)
-
-### Q: จะใช้กับ OpenClaw/Aider/Cline ยังไง?
-**A:** ตั้ง base URL เป็น `http://localhost:3334/v1` + api_key = dummy (ใช้ใดๆ ก็ได้)
-
-### Q: ถ้า provider ล่มจะเป็นไง?
-**A:** ระบบมี 26 providers + exponential cooldown + circuit breaker + relaxed retry
-→ 1 provider ล่ม = fallback ไป provider อื่นอัตโนมัติ
-
-### Q: SMLGateway เก็บ prompt/response ไหม?
-**A:** เก็บ 500 ตัวอักษรแรก + 500 ตัวอักษรของ assistant response ใน `gateway_logs` (สำหรับ debug/analytics)
-ลบ log เก่า 7 วัน อัตโนมัติ (`cleanOldLogs()`)
-ปิด/แก้ได้ใน `src/app/v1/chat/completions/route.ts`
-
-### Q: ต้อง restart หลังแก้ .env.local ไหม?
-**A:** ต้อง → `docker compose up -d --force-recreate` เพื่อโหลด env ใหม่
-**แต่** ถ้าตั้ง key ผ่าน UI (SetupModal) → ไม่ต้อง restart (เก็บใน DB)
-
----
-
-## 🔧 Development
-
-### Commands
-
-```bash
-npm run dev            # Next.js dev server
-npm run build          # Production build
-npm run start          # Production server
-npm run lint           # ESLint
-npm run test           # Vitest
-npm run test:watch     # Vitest watch mode
-npm run build:mcp      # Build MCP server
-npm run mcp            # Run MCP server
-```
-
-### Load Testing (k6)
-
-```bash
-npm run loadtest:smoke        # Quick smoke test
-npm run loadtest:dashboard    # Dashboard load
-npm run loadtest:chat         # Chat endpoint load
-npm run loadtest:ratelimit    # Rate limit test
-npm run loadtest:stress       # Full stress test
-npm run loadtest:quality      # Quality test (k6)
-npm run loadtest:quality:long  # Long quality test (30m, 3 VUs)
-npm run test:quality           # Quality test (tsx, single round)
-npm run test:quality:long      # Continuous quality test
-```
-
-### Deploy Checklist
-
-```bash
-rtk npx next build                                                           # 0 errors
+# Build + deploy + verify (ต้องผ่านทั้ง 3)
+rtk npx next build                                                    # (1) 0 errors
 rtk docker compose up -d --build
-sleep 5 && curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3334/   # 200
-docker ps --format "{{.Names}}\t{{.Status}}" | grep sml-gateway                # Up (healthy)
+sleep 5 && curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3334/   # (2) 200
+docker ps --format "{{.Names}} {{.Status}}" | grep sml-gateway         # (3) Up / healthy
 ```
 
-### Caddy Reload
-
+Load test (k6):
 ```bash
-powershell -File "C:/Users/jatur/restart-caddy.ps1"
+npm run loadtest:smoke     # สั้นๆ — verify endpoint ยังตอบ
+npm run loadtest:chat      # mixed category
+npm run loadtest:stress    # stress hedge + pool recovery
+npm run loadtest:ratelimit # rate limit enforcement
+```
+
+Reset database:
+```bash
+docker compose down -v   # ⚠ ลบ volume ทั้งหมด
+docker compose up -d --build
+```
+
+Reindex QMD:
+```bash
+bash scripts/reindex.sh
 ```
 
 ---
 
-## ⚡ Performance Optimizations
+## Troubleshooting
 
-- **Response cache (Valkey-backed)** — 1h TTL, aggressive mode, skips only streaming. Cache key includes tools + tool_choice to prevent cross-request bleeding.
-- **Hedge top-3 parallel (per-provider dedup)** — fires top 3 candidates from **different** providers in parallel; first healthy response wins, stragglers aborted. Prevents same-provider concurrent rate-limiting.
-- **Exponential cooldown with fast recovery** — fail streak ladder 10s / 20s / 40s / 80s / 2m cap. Auto-reset after 10 minutes idle.
-- **Warmup worker** — every 2 minutes pings passing models to keep connections warm and refresh live scores.
-- **Semantic cache (pgvector)** — embeddings via local Ollama `nomic-embed-text`; near-duplicate queries hit at cosine similarity ≥ 0.92. Gracefully degrades when the `vector` extension is absent.
-- **Valkey tuned (1GB LRU, cache-only)** — no persistence, LRU eviction, TCP keepalive 60s.
-- **Postgres performance indexes** — partial indexes for active cooldowns, recent gateway logs, and passed exams.
-- **Prometheus metrics** at `/api/metrics` — models, latency p50/p99, cache hit ratio, provider limit remaining.
-- **Node built-in HTTP client** — uses Node 20's native `fetch` (undici internally with keep-alive). Custom undici dispatchers disabled due to compatibility issues with some providers.
-- **Context-aware provider filter** — requests over 20K tokens skip providers with insufficient context window.
-- **Smart circuit breaker** — half-open probe 30s after trip; one success closes the breaker immediately.
-- **RELAXED-RETRY budget signal** — second-pass retry passes remaining timeout budget via AbortSignal, preventing requests from outliving the total timeout.
+| อาการ | สาเหตุ/วิธีแก้ |
+|---|---|
+| `/v1/chat/completions` → 404 model | ใช้ `sml/auto` หรือเช็ค `GET /v1/models` |
+| 503 ยาว | pool หมด — ดู dashboard "โควต้า Provider" + "ขาด/ลา", รอ cooldown หรือเติม API key |
+| p99 สูง | มักเป็น long context — filter ไปโมเดล `context_length` สูง, ดู `/api/routing-stats` |
+| `sml/auto` เลือกผิดหมวด | เช็ค `model_category_scores` + `teachers` ใน DB |
+| Worker ไม่รัน | trigger ด้วย `POST /api/worker`, ดู `worker_logs` + `worker_state` |
+| postgres healthcheck fail | `docker compose logs postgres` — มักเป็น volume permission |
 
----
+Debug DB:
+```bash
+docker exec -it sml-gateway-postgres-1 psql -U sml -d smlgateway
+# \dt                                      ดู tables
+# SELECT * FROM teachers;                  ดูครู
+# SELECT * FROM model_fail_streak;         ดู cooldown
+# SELECT * FROM gateway_logs ORDER BY created_at DESC LIMIT 10;
+```
 
-## 📐 Key Design Decisions
-
-1. **Rule-based exam > Judge AI** — ตรวจแบบ deterministic = 0 cost + 100ms + ไม่สุ่ม
-2. **Exponential cooldown cap ที่ 2 นาที** — ป้องกัน candidate pool หาย → 503 cascade
-3. **Separate quota fail vs capacity fail** — Quota fail (429/TPM) ไม่นับเป็น capacity
-4. **Provider-first candidate selection** — Group by provider → sort providers → within provider sort models
-5. **Size filter ใช้ × 1.4** — เผื่อ response + safety margin
-6. **Per-attempt timeout dynamic** — Request ใหญ่ timeout ยาวขึ้น
-7. **Ollama skip ถ้ามี cloud alternative + not loaded** — ประหยัดเวลา cold-load
-8. **Hedge race เฉพาะ non-tools** — Tools request ไม่ parallel เพื่อประหยัด quota
-9. **Category boost ก่อน sort** — ผู้ชนะ category ขึ้นบนเสมอ
-10. **Live score in-memory (EMA)** — ไม่ต้องรอ DB round-trip ข้าม request
-11. **Candidate dedup safety** — Set-based dedup ใน spreadCandidates + health subquery ใช้ `MAX(id)` ไม่ใช่ `MAX(checked_at)` ป้องกัน row multiplication
-12. **Exam-passed only (score_pct ≥ 85)** — model ต้องผ่านสอบก่อนรับ request จริง ไม่มี fallback ให้ model ที่ยังไม่สอบ
-13. **Vision exam ด้วยรูปจริง** — ข้อสอบ 3 ข้อใช้รูปจาก `exam-images/` ทดสอบอ่าน Thai text, ระบุห้อง, อ่านป้ายการ์ตูน
-14. **Smart token estimation** — `estimateTokens` นับเฉพาะ text ไม่นับ image base64 (รูป = ~1K tokens คงที่)
-15. **MIN-CTX filter ≥ 16K** — ตัด model context เล็กที่ให้คำตอบสั้น
-16. **LAT-CAP filter ≤ 30s** — ตัด model ที่สอบช้าเกิน
-17. **Thai-focused exam** — เน้นภาษาไทย ความรู้ไทย อาหารไทย วัฒนธรรมไทย
-
----
-
-## 📄 License
-
-Private project — BC Account.
+Logs:
+```bash
+docker compose logs -f sml-gateway
+docker compose logs -f postgres
+```

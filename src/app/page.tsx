@@ -34,7 +34,6 @@ import type {
 import { StatsCards } from "../components/StatsCards";
 import { ModelGrid } from "../components/ModelGrid";
 import { ChatPanel } from "../components/ChatPanel";
-import { GuideModal } from "../components/GuideModal";
 import { SetupModal } from "../components/SetupModal";
 import { SpeedRace } from "../components/SpeedRace";
 import { Analytics } from "../components/Analytics";
@@ -54,391 +53,6 @@ import { TeachersPanel } from "../components/TeachersPanel";
 import { CodegenPanel } from "../components/CodegenPanel";
 import { DevSuggestionsPanel } from "../components/DevSuggestionsPanel";
 
-// ─── Gateway Config Card ───────────────────────────────────────────────────────
-
-type ConfigTab = "nextjs" | "python" | "curl" | "openclaw" | "langchain" | "any";
-
-const CONFIG_SNIPPETS: Record<ConfigTab, { label: string; lang: string; code: string; note?: string }> = {
-  nextjs: {
-    label: "Next.js / Node",
-    lang: "typescript",
-    code: `import OpenAI from "openai";
-
-const client = new OpenAI({
-  baseURL: "http://localhost:3334/v1",
-  apiKey: "dummy",            // ไม่ต้องใช้ key จริง
-});
-
-// --- Text ---
-const chat = await client.chat.completions.create({
-  model: "auto",              // gateway เลือกตัวดีสุดให้
-  messages: [{ role: "user", content: "สวัสดีครับ" }],
-});
-console.log(chat.choices[0].message.content);
-
-// --- Vision ---
-const vision = await client.chat.completions.create({
-  model: "auto",
-  messages: [{
-    role: "user",
-    content: [
-      { type: "text", text: "อธิบายรูปนี้" },
-      { type: "image_url", image_url: { url: "data:image/png;base64,..." } },
-    ],
-  }],
-});
-
-// --- Tool Calling ---
-const tools = await client.chat.completions.create({
-  model: "auto",
-  messages: [{ role: "user", content: "กรุงเทพอากาศเป็นยังไง" }],
-  tools: [{
-    type: "function",
-    function: {
-      name: "get_weather",
-      description: "ดูสภาพอากาศ",
-      parameters: {
-        type: "object",
-        properties: { city: { type: "string" } },
-        required: ["city"],
-      },
-    },
-  }],
-});
-
-// --- Streaming ---
-const stream = await client.chat.completions.create({
-  model: "auto",
-  messages: [{ role: "user", content: "เล่านิทานสั้นๆ" }],
-  stream: true,
-});
-for await (const chunk of stream) {
-  process.stdout.write(chunk.choices[0]?.delta?.content ?? "");
-}`,
-    note: "npm install openai",
-  },
-  python: {
-    label: "Python",
-    lang: "python",
-    code: `from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://localhost:3334/v1",
-    api_key="dummy",            # ไม่ต้องใช้ key จริง
-)
-
-# --- Text ---
-chat = client.chat.completions.create(
-    model="auto",               # gateway เลือกตัวดีสุดให้
-    messages=[{"role": "user", "content": "สวัสดีครับ"}],
-)
-print(chat.choices[0].message.content)
-
-# --- Vision ---
-vision = client.chat.completions.create(
-    model="auto",
-    messages=[{
-        "role": "user",
-        "content": [
-            {"type": "text", "text": "อธิบายรูปนี้"},
-            {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}},
-        ],
-    }],
-)
-
-# --- Tool Calling ---
-tools = client.chat.completions.create(
-    model="auto",
-    messages=[{"role": "user", "content": "กรุงเทพอากาศเป็นยังไง"}],
-    tools=[{
-        "type": "function",
-        "function": {
-            "name": "get_weather",
-            "description": "ดูสภาพอากาศ",
-            "parameters": {
-                "type": "object",
-                "properties": {"city": {"type": "string"}},
-                "required": ["city"],
-            },
-        },
-    }],
-)
-
-# --- Streaming ---
-stream = client.chat.completions.create(
-    model="auto",
-    messages=[{"role": "user", "content": "เล่านิทานสั้นๆ"}],
-    stream=True,
-)
-for chunk in stream:
-    print(chunk.choices[0].delta.content or "", end="")`,
-    note: "pip install openai",
-  },
-  curl: {
-    label: "cURL",
-    lang: "bash",
-    code: `# --- Text ---
-curl http://localhost:3334/v1/chat/completions \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "auto",
-    "messages": [{"role": "user", "content": "สวัสดีครับ"}]
-  }'
-
-# --- Vision ---
-curl http://localhost:3334/v1/chat/completions \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "auto",
-    "messages": [{
-      "role": "user",
-      "content": [
-        {"type": "text", "text": "อธิบายรูปนี้"},
-        {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
-      ]
-    }]
-  }'
-
-# --- Streaming ---
-curl http://localhost:3334/v1/chat/completions \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "auto",
-    "messages": [{"role": "user", "content": "เล่านิทานสั้นๆ"}],
-    "stream": true
-  }'`,
-  },
-  openclaw: {
-    label: "OpenClaw",
-    lang: "bash",
-    code: `# Docker — OpenClaw อยู่คนละ container
-docker exec <openclaw-container> \\
-  openclaw onboard \\
-  --non-interactive --accept-risk \\
-  --auth-choice custom-api-key \\
-  --custom-base-url http://host.docker.internal:3333/v1 \\
-  --custom-model-id auto \\
-  --custom-api-key dummy \\
-  --custom-compatibility openai \\
-  --skip-channels --skip-daemon \\
-  --skip-health --skip-search \\
-  --skip-skills --skip-ui
-
-# Local — OpenClaw รันบนเครื่องเดียวกัน
-openclaw onboard \\
-  --non-interactive --accept-risk \\
-  --auth-choice custom-api-key \\
-  --custom-base-url http://localhost:3333/v1 \\
-  --custom-model-id auto \\
-  --custom-api-key dummy \\
-  --custom-compatibility openai \\
-  --skip-channels --skip-daemon \\
-  --skip-health --skip-search \\
-  --skip-skills --skip-ui`,
-    note: "Docker ใช้ host.docker.internal แทน localhost",
-  },
-  langchain: {
-    label: "LangChain",
-    lang: "python",
-    code: `from langchain_openai import ChatOpenAI
-
-llm = ChatOpenAI(
-    base_url="http://localhost:3334/v1",
-    api_key="dummy",
-    model="auto",
-)
-
-# --- Text ---
-response = llm.invoke("สวัสดีครับ")
-print(response.content)
-
-# --- With Tools ---
-from langchain_core.tools import tool
-
-@tool
-def get_weather(city: str) -> str:
-    """ดูสภาพอากาศ"""
-    return f"{city}: 35°C แดดจัด"
-
-llm_with_tools = llm.bind_tools([get_weather])
-result = llm_with_tools.invoke("กรุงเทพอากาศเป็นยังไง")
-print(result.tool_calls)
-
-# --- Streaming ---
-for chunk in llm.stream("เล่านิทานสั้นๆ"):
-    print(chunk.content, end="")`,
-    note: "pip install langchain-openai",
-  },
-  any: {
-    label: "ทุก Framework",
-    lang: "text",
-    code: `┌─────────────────────────────────────────────┐
-│  SMLGateway = OpenAI-compatible API         │
-│  ใช้ได้กับทุก library ที่รองรับ OpenAI SDK    │
-└─────────────────────────────────────────────┘
-
-Endpoint:    http://localhost:3334/v1/chat/completions
-API Key:     dummy  (ใส่อะไรก็ได้ ไม่ต้อง auth)
-Model:       auto   (หรือเลือก model เฉพาะได้)
-
-รองรับ:
-  POST /v1/chat/completions   — Chat (text, vision, tools, stream)
-  GET  /v1/models              — รายชื่อ model ทั้งหมด
-
-ตัวอย่าง config ใน framework ต่างๆ:
-  Vercel AI SDK:  createOpenAI({ baseURL: "...", apiKey: "dummy" })
-  LiteLLM:        model="openai/auto", api_base="..."
-  Dify:           Custom Model Provider → OpenAI-compatible
-  LobeChat:       Settings → OpenAI → Base URL
-  AutoGen:        config_list: [{ base_url: "...", api_key: "dummy" }]`,
-  },
-};
-
-function GatewayConfigCard() {
-  const [activeTab, setActiveTab] = useState<ConfigTab>("nextjs");
-  const [copied, setCopied] = useState(false);
-  const snippet = CONFIG_SNIPPETS[activeTab];
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(snippet.code).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  };
-
-  const tabOrder: ConfigTab[] = ["nextjs", "python", "curl", "langchain", "openclaw", "any"];
-
-  return (
-    <div
-      style={{
-        background: "rgba(99,102,241,0.06)",
-        border: "1px solid rgba(99,102,241,0.25)",
-        backdropFilter: "blur(12px)",
-        borderRadius: "1rem",
-        padding: "1.5rem",
-        marginTop: "1.5rem",
-      }}
-    >
-      {/* Header */}
-      <div style={{ marginBottom: "0.75rem" }}>
-        <span style={{ fontSize: "0.75rem", color: "rgb(165,180,252)", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase" }}>
-          Gateway Config
-        </span>
-        <p style={{ fontSize: "0.875rem", color: "rgb(156,163,175)", marginTop: "0.25rem" }}>
-          SMLGateway เป็น OpenAI-compatible API — เชื่อมต่อได้ทุก framework ที่รองรับ OpenAI SDK
-        </p>
-      </div>
-
-      {/* Connection Info */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "0.5rem", marginBottom: "1rem" }}>
-        {[
-          { label: "Base URL", value: "http://localhost:3334/v1", color: "rgb(129,140,248)" },
-          { label: "API Key", value: "dummy (ใส่อะไรก็ได้)", color: "rgb(251,191,36)" },
-          { label: "Model", value: "auto", color: "rgb(110,231,183)" },
-        ].map((info) => (
-          <div key={info.label} style={{ background: "rgba(0,0,0,0.3)", borderRadius: "0.5rem", padding: "0.5rem 0.75rem" }}>
-            <div style={{ fontSize: "0.65rem", color: "rgb(107,114,128)", fontWeight: 600, textTransform: "uppercase" }}>{info.label}</div>
-            <code style={{ fontSize: "0.8rem", color: info.color, fontFamily: "var(--font-geist-mono), monospace" }}>{info.value}</code>
-          </div>
-        ))}
-      </div>
-
-      {/* Tabs */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.375rem", marginBottom: "0.75rem" }}>
-        {tabOrder.map((tab) => (
-          <button
-            key={tab}
-            onClick={() => { setActiveTab(tab); setCopied(false); }}
-            style={{
-              padding: "0.375rem 0.75rem",
-              borderRadius: "0.5rem",
-              fontSize: "0.75rem",
-              fontWeight: 600,
-              cursor: "pointer",
-              border: `1px solid ${activeTab === tab ? "rgba(99,102,241,0.5)" : "rgba(255,255,255,0.1)"}`,
-              background: activeTab === tab ? "rgba(99,102,241,0.2)" : "transparent",
-              color: activeTab === tab ? "rgb(165,180,252)" : "rgb(107,114,128)",
-              transition: "all 0.2s",
-            }}
-          >
-            {CONFIG_SNIPPETS[tab].label}
-          </button>
-        ))}
-      </div>
-
-      {/* Code Block */}
-      <div style={{ position: "relative" }}>
-        <pre
-          style={{
-            background: "rgba(0,0,0,0.4)",
-            border: "1px solid rgba(255,255,255,0.08)",
-            borderRadius: "0.5rem",
-            padding: "1rem",
-            fontFamily: "var(--font-geist-mono), monospace",
-            fontSize: "0.75rem",
-            lineHeight: "1.5",
-            color: "rgb(209,213,219)",
-            overflowX: "auto",
-            margin: 0,
-            maxHeight: "28rem",
-            overflowY: "auto",
-          }}
-        >
-          {snippet.code}
-        </pre>
-        <button
-          onClick={handleCopy}
-          style={{
-            position: "absolute",
-            top: "0.5rem",
-            right: "0.5rem",
-            padding: "0.25rem 0.75rem",
-            background: copied ? "rgba(16,185,129,0.3)" : "rgba(99,102,241,0.3)",
-            border: `1px solid ${copied ? "rgba(16,185,129,0.5)" : "rgba(99,102,241,0.5)"}`,
-            borderRadius: "0.375rem",
-            color: copied ? "rgb(110,231,183)" : "rgb(165,180,252)",
-            fontSize: "0.75rem",
-            fontWeight: 600,
-            cursor: "pointer",
-            transition: "all 0.2s",
-          }}
-        >
-          {copied ? "คัดลอกแล้ว \u2713" : "คัดลอก"}
-        </button>
-      </div>
-
-      {/* Install note */}
-      {snippet.note && (
-        <p style={{ fontSize: "0.7rem", color: "rgb(251,191,36)", marginTop: "0.5rem" }}>
-          * {snippet.note}
-        </p>
-      )}
-
-      {/* Special Models */}
-      <div style={{ marginTop: "1rem", borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: "0.75rem" }}>
-        <p style={{ fontSize: "0.75rem", color: "rgb(107,114,128)", marginBottom: "0.5rem", fontWeight: 600 }}>
-          โมเดลพิเศษ:
-        </p>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "0.25rem 1rem" }}>
-          {[
-            { id: "auto", desc: "เลือกตัวดีสุดอัตโนมัติ (แนะนำ)" },
-            { id: "sml/fast", desc: "เร็วที่สุด (low latency)" },
-            { id: "sml/tools", desc: "รองรับ tool calling" },
-            { id: "sml/thai", desc: "เก่งภาษาไทย" },
-          ].map((m) => (
-            <div key={m.id} style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-              <code style={{ fontSize: "0.75rem", color: "rgb(129,140,248)", fontFamily: "var(--font-geist-mono), monospace", minWidth: "7rem" }}>
-                {m.id}
-              </code>
-              <span style={{ fontSize: "0.7rem", color: "rgb(156,163,175)" }}>{m.desc}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── Main Dashboard ────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -449,7 +63,6 @@ export default function Dashboard() {
   const [triggering, setTriggering] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [, setTick] = useState(0);
-  const [showGuide, setShowGuide] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
 
   interface GatewayLog {
@@ -629,16 +242,18 @@ export default function Dashboard() {
                 </svg>
                 Setup
               </button>
-              <button
-                onClick={() => setShowGuide(true)}
+              <a
+                href="/guide"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="px-3 py-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition-colors text-xs"
-                title="คู่มือการใช้งาน"
+                title="คู่มือการใช้งาน (เปิด tab ใหม่)"
               >
                 <svg className="h-4 w-4 inline mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
                 </svg>
                 คู่มือ
-              </button>
+              </a>
               <a
                 href="https://github.com/jaturapornchai/sml-gateway"
                 target="_blank"
@@ -655,7 +270,6 @@ export default function Dashboard() {
           {/* Row 2: Nav links — wrappable */}
           <div className="flex flex-wrap gap-1 pb-2">
             {[
-              { id: "gateway-config", icon: "\u2699\uFE0F", label: "คู่มือเชื่อมต่อ" },
               { id: "gateway-logs",  icon: "\u{1F4DD}", label: "สมุดจดงาน" },
               { id: "codegen",       icon: "\u{1F4BE}", label: "โค้ดระบบ" },
               { id: "dev-suggestions", icon: "\u{1F4A1}", label: "คำแนะนำ Dev" },
@@ -697,14 +311,7 @@ export default function Dashboard() {
         {/* ── Live Mascot Theater (data-driven from gateway logs) ───────── */}
         <MascotScene />
 
-        {/* ── Gateway Config (connection guide) ──────────────────────────── */}
-        <section id="gateway-config" className="animate-fade-in-up stagger-0">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-2xl">{"\u2699\uFE0F"}</span>
-            <span className="font-black text-white text-3xl">คู่มือเชื่อมต่อ</span>
-          </div>
-          <GatewayConfigCard />
-        </section>
+        {/* ── Gateway Config — moved to /guide page ──────────────────────── */}
 
         {/* ── Gateway Logs (top of dashboard, wide + big font) ──────────── */}
         <section id="gateway-logs" className="animate-fade-in-up stagger-0">
@@ -722,12 +329,12 @@ export default function Dashboard() {
           </div>
 
           <div className="glass rounded-lg overflow-hidden">
-            <div className="overflow-x-auto max-h-[1000px] overflow-y-auto">
+            <div className="overflow-x-auto">
               {gatewayLogs.length === 0 ? (
                 <div className="px-4 py-8 text-center text-gray-600 text-base">ยังไม่มีเด็กมาส่งการบ้าน</div>
               ) : (
                 <table className="w-full text-base">
-                  <thead className="sticky top-0 bg-gray-900/95 backdrop-blur">
+                  <thead className="bg-gray-900/95 backdrop-blur">
                     <tr className="border-b border-white/10 text-gray-400 text-sm uppercase">
                       <th className="px-2 py-1 text-left">เวลา</th>
                       <th className="px-2 py-1 text-left">สถานะ</th>
@@ -1399,7 +1006,7 @@ export default function Dashboard() {
           </div>
 
           <div className="glass rounded-2xl overflow-hidden">
-            <div className="font-mono text-xs divide-y divide-white/5 max-h-[500px] overflow-y-auto">
+            <div className="font-mono text-xs divide-y divide-white/5">
               {logs.length === 0 ? (
                 <div className="px-4 py-8 text-center text-gray-600">ครูยังไม่ได้จดอะไร</div>
               ) : (
@@ -1432,7 +1039,6 @@ export default function Dashboard() {
       </div>
 
       {/* ── Guide Modal ──────────────────────────────────────────────────── */}
-      {showGuide && <GuideModal onClose={() => setShowGuide(false)} />}
 
       {/* ── Setup Modal ──────────────────────────────────────────────────── */}
       <SetupModal open={showSetup} onClose={() => setShowSetup(false)} />
